@@ -164,9 +164,9 @@ def is_valid_ebay_item(item, title, price, link):
         
     return True
 
-def scrape_ebay_seller(seller_id, max_pages=5):
+def scrape_ebay_seller(seller_id,store_name, max_pages=5):
     results = []
-    base_url = f"https://www.ebay.com/sch/i.html?_dkr=1&iconV2Request=true&_blrs=recall_filtering&_ssn={seller_id}&store_name={seller_id}&_oac=1"
+    base_url = f"https://www.ebay.com/sch/i.html?_dkr=1&iconV2Request=true&_blrs=recall_filtering&_ssn={seller_id}&store_name={store_name}&_oac=1"
     
     # 添加排序参数，按最新上架排序
     base_url += "&_sop=10"
@@ -304,5 +304,6 @@ def scrape_ebay_seller(seller_id, max_pages=5):
         return None
 
 if __name__ == "__main__":
-    seller_id = "yingniao02"  # 替换为目标卖家ID
-    results_df = scrape_ebay_seller(seller_id, max_pages=2) 
+    seller_id = "fengou_006"  # 替换为目标卖家ID
+    store_name= "fengou006"
+    results_df = scrape_ebay_seller(seller_id,store_name,max_pages=2) 

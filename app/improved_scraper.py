@@ -41,6 +41,9 @@ class ImprovedEbayStoreScraper:
     
     def __init__(self, redis_client=None, use_proxy=False):
         """初始化爬虫"""
+        # 将模块级别的logger添加为实例属性
+        self.logger = logger
+        
         # 默认headers
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -93,6 +96,11 @@ class ImprovedEbayStoreScraper:
             'last_success_time': 0,
             'avg_response_time': 0
         }
+        
+        # 添加代理列表
+        self.proxy_list = []
+        # 添加一个错误重试标记
+        self.retry_with_different_method = False
     
     def _load_proxies(self):
         """加载代理列表"""
@@ -124,116 +132,147 @@ class ImprovedEbayStoreScraper:
         items = []
         self.stats['requests'] += 1
         
-        logger.info(f"正在获取店铺商品: {store_url}")
+        self.logger.info(f"正在获取店铺商品: {store_url}")
         
-        # 更精细的请求头配置
-        self.headers = {
-            'User-Agent': random.choice(self.user_agents),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Referer': 'https://www.google.com/',
-            'Cache-Control': 'max-age=0',
-            'Pragma': 'no-cache'
-        }
+        # 首先尝试使用curl方法获取数据
+        self.logger.info("优先使用curl命令获取页面...")
+        html_content = self._curl_request(store_url)
+        if html_content:
+            items = self.parse_items_from_html(html_content)
+            if items:
+                self.stats['successful_requests'] += 1
+                self.stats['items_scraped'] += len(items)
+                self.stats['last_success_time'] = time.time()
+                self.logger.info(f"通过curl成功获取 {len(items)} 个商品")
+                return items
+        
+        self.logger.warning("curl方法失败，尝试使用requests方法...")
         
         for attempt in range(max_retries):
             try:
-                # 添加随机延迟，模拟人类行为
-                delay = random.uniform(2.0, 5.0)
-                logger.info(f"等待 {delay:.2f} 秒后发起请求...")
+                # 使用更长的等待时间 (10-20秒)
+                delay = random.uniform(10.0, 20.0)
+                self.logger.info(f"等待 {delay:.2f} 秒后发起请求...")
                 time.sleep(delay)
                 
-                # 准备代理
-                proxies = None
-                if self.use_proxy and self.proxies:
-                    proxy = random.choice(self.proxies)
-                    proxies = {
-                        'http': proxy,
-                        'https': proxy
-                    }
-                
+                # 初始化start_time变量
                 start_time = time.time()
-                # 添加cookies参数和refer头，减少被检测概率
+                
+                # 设置cookies - 每次请求使用随机生成的cookie值
                 cookies = {
-                    'ebay': '%5Esbf%3D%23100000%5E',
-                    'dp1': 'bu1p/QEBfX0BAX19AQA**63e9e1d5^',
-                    's': 'CgAD4ACBjLqUMOTUzYjQxODcwMTgwYWI5YTUzYWJmZmZmZmU0ZmYzZjXshixH',
+                    'npii': f'btguid/{self._generate_random_id()}^cguid/{self._generate_random_id()}^',
+                    'dp1': f'bu1p/QEBfX0BAX19AQA**{self._generate_random_id(8)}^u1f/QEBfX0BAX19AQA**{self._generate_random_id(8)}^',
+                    's': f'CgAD4gIBYLDqk9W{self._generate_random_id(30)}',
+                    'ebay': '%5Ejs%3D1%5Edv%3D0%5Esjs%3D0%5E',
                 }
                 
+                # 标准请求 - 使用随机化的User-Agent
+                headers['User-Agent'] = random.choice(self.user_agents)
+                self.logger.info("使用标准请求方法")
                 response = requests.get(
-                    store_url, 
-                    headers=self.headers, 
-                    proxies=proxies,
+                    store_url,
+                    headers=headers,
                     cookies=cookies,
-                    timeout=30,
-                    verify=True
+                    timeout=30
                 )
                 
-                try:
-                    response.raise_for_status()
-                    
-                    # 获取响应成功
-                    response_time = time.time() - start_time
-                    logger.info(f"成功获取店铺页面，响应时间: {response_time:.2f} 秒")
-                    store_html = response.text
-                    
-                    # 解析HTML获取商品信息
-                    items = self.parse_items_from_html(store_html)
-                    
-                    # 成功获取数据，更新统计信息
-                    self.stats['successful_requests'] += 1
-                    
-                    return items
-                    
-                except requests.exceptions.HTTPError as e:
-                    if "503" in str(e):
-                        logger.warning(f"遇到503服务不可用错误")
-                        
-                        # 保存错误响应内容以便分析
-                        if hasattr(e, 'response') and e.response:
-                            debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
-                            os.makedirs(debug_dir, exist_ok=True)
-                            debug_file = os.path.join(debug_dir, f"error_503_{int(time.time())}.html")
-                            with open(debug_file, 'w', encoding='utf-8') as f:
-                                f.write(e.response.text)
-                            logger.info(f"已保存503错误响应内容到 {debug_file}")
-                    
-                    self.stats['failed_requests'] += 1
-                    self.stats['retry_count'] += 1
-                    
-                    if attempt < max_retries - 1:
-                        # 增加退避时间
-                        backoff_time = (2 ** attempt) + random.uniform(5, 10)
-                        logger.warning(f"请求失败，等待 {backoff_time:.2f} 秒后进行第 {attempt+2}/{max_retries} 次尝试")
-                        time.sleep(backoff_time)
+                # 如果这次失败，下次尝试不同方法
+                if response.status_code != 200:
+                    self.retry_with_different_method = True
+                    self.logger.warning(f"请求失败，状态码: {response.status_code}，尝试第 {attempt+1}/{max_retries} 次")
+                else:
+                    self.retry_with_different_method = False
+                    self.logger.info(f"成功获取店铺页面，状态码: 200，页面大小: {len(response.text)} 字节")
+                    items = self.parse_items_from_html(response.text)
+                    if items:
+                        self.stats['successful_requests'] += 1
+                        self.stats['items_scraped'] += len(items)
+                        self.stats['last_success_time'] = time.time()
+                        return items
                     else:
-                        logger.error(f"所有尝试均失败: {e}")
+                        self.logger.warning(f"解析页面未找到商品数据，尝试第 {attempt+1}/{max_retries} 次")
                 
+                # 设置退避时间
+                if attempt < max_retries - 1:
+                    backoff_time = (2 ** attempt) + random.uniform(1, 2)
+                    self.logger.info(f"等待 {backoff_time:.2f} 秒后重试...")
+                    time.sleep(backoff_time)
+            
             except Exception as e:
-                self.stats['failed_requests'] += 1
-                self.stats['retry_count'] += 1
-                logger.warning(f"第 {attempt+1}/{max_retries} 次尝试失败: {e}")
-                
-                if attempt == max_retries - 1:
-                    duration = time.time() - start_time
-                    logger.error(f"达到最大重试次数，爬取失败，耗时: {duration:.2f} 秒")
-                    import traceback
-                    logger.error(traceback.format_exc())
+                self.logger.error(f"第 {attempt+1}/{max_retries} 次尝试失败: {str(e)}")
+                if attempt < max_retries - 1:
+                    backoff_time = (2 ** attempt) + random.uniform(1, 2)
+                    self.logger.info(f"等待 {backoff_time:.2f} 秒后重试...")
+                    time.sleep(backoff_time)
         
-        # 所有尝试都失败
+        self.logger.error(f"达到最大重试次数，爬取失败")
         return []
+    
+    def _curl_request(self, url):
+        """使用curl命令行来获取页面内容"""
+        try:
+            import subprocess
+            self.logger.info("尝试使用curl命令获取页面")
+            
+            # 创建随机cookie值
+            random_id1 = self._generate_random_id()
+            random_id2 = self._generate_random_id()
+            random_id3 = self._generate_random_id(8)
+            random_id4 = self._generate_random_id(30)
+            
+            # 随机等待5-10秒，模拟人类行为但不太长
+            wait_time = random.uniform(5, 10)
+            time.sleep(wait_time)
+            
+            # 使用curl命令
+            cmd = [
+                'curl',
+                '-s',  # 静默模式
+                '-L',  # 跟随重定向
+                '-A', random.choice(self.user_agents),  # 随机User-Agent
+                '--max-time', '30',  # 最大超时时间
+                '--connect-timeout', '30',  # 连接超时
+                '-H', 'Accept-Language: en-US,en;q=0.9', 
+                '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                '-H', 'dnt: 1',
+                '-H', f'Cookie: npii=btguid/{random_id1}^cguid/{random_id2}^; dp1=bu1p/QEBfX0BAX19AQA**{random_id3}^; s=CgAD4gIBYLDqk9W{random_id4}; ebay=%5Ejs%3D1%5Edv%3D0%5Esjs%3D0%5E',
+                '-H', 'Referer: https://www.google.com/',
+                '-H', 'Connection: keep-alive',
+                '-H', 'Cache-Control: max-age=0',
+                url
+            ]
+            
+            # 执行命令
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                self.logger.info(f"curl请求成功，获取内容大小: {len(result.stdout)} 字节")
+                return result.stdout
+            else:
+                self.logger.error(f"curl请求失败: {result.stderr}")
+                return None
+        except Exception as e:
+            self.logger.error(f"执行curl命令失败: {e}")
+            return None
     
     def parse_items_from_html(self, html_content):
         """从HTML中解析所有商品信息"""
         soup = BeautifulSoup(html_content, 'html.parser')
         items = []
         
+        # 保存页面以便调试
+        try:
+            debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, f'ebay_page_{int(time.time())}.html')
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            self.logger.info(f"保存了HTML页面到 {debug_file}")
+        except Exception as e:
+            self.logger.warning(f"保存HTML失败: {e}")
+        
         # 尝试多种可能的CSS选择器
         selector_pairs = [
-            ('.s-item__wrapper', '.s-item'),
+            ('.s-item__wrapper', None),
             ('.srp-results .s-item', None),
             ('#srp-river-results .s-item', None),
             ('.b-list__items_nofooter .s-item', None),
@@ -241,12 +280,6 @@ class ImprovedEbayStoreScraper:
             ('.srp-river-results li.s-item', None),
             ('div[data-listing-id]', None)
         ]
-        
-        # 保存页面以便调试
-        debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
-        os.makedirs(debug_dir, exist_ok=True)
-        with open(os.path.join(debug_dir, f'page_{int(time.time())}.html'), 'w', encoding='utf-8') as f:
-            f.write(html_content)
         
         for main_selector, sub_selector in selector_pairs:
             containers = soup.select(main_selector)
@@ -280,73 +313,80 @@ class ImprovedEbayStoreScraper:
         return items
     
     def parse_item_container(self, container):
-        """从HTML元素中解析商品信息"""
+        """从容器元素解析商品信息"""
         try:
-            # 恢复原始解析逻辑
+            # 提取最基本的商品信息
+            item_data = {}
+            
             # 商品标题
             title_element = container.select_one('.s-item__title')
-            title = title_element.text.strip() if title_element else "N/A"
+            if title_element:
+                title = title_element.get_text(strip=True)
+                # 跳过"Shop on eBay"广告元素
+                if title == "Shop on eBay":
+                    return None
+                item_data['title'] = title
             
-            # 跳过广告元素
-            if title == "Shop on eBay":
-                return None
+            # 商品链接和ID
+            link_element = container.select_one('.s-item__link')
+            if link_element and 'href' in link_element.attrs:
+                url = link_element['href']
+                item_data['url'] = url
+                
+                # 提取商品ID
+                match = re.search(r'/(\d+)\?', url)
+                if match:
+                    item_id = match.group(1)
+                    item_data['id'] = item_id
             
             # 商品价格
             price_element = container.select_one('.s-item__price')
-            price_text = price_element.text.strip() if price_element else "N/A"
-            
-            # 清理价格文本
-            price = 0
-            if price_text != "N/A":
-                # 处理价格范围 (例如: $10.99 to $24.99)
-                if " to " in price_text:
-                    price_text = price_text.split(" to ")[0]
-                
-                # 提取数字
-                price_match = re.search(r'(\d+\.\d+|\d+)', price_text)
-                if price_match:
-                    price = float(price_match.group(1))
-            
-            # 商品链接
-            link_element = container.select_one('.s-item__link')
-            url = link_element['href'] if link_element and 'href' in link_element.attrs else "N/A"
+            if price_element:
+                price_text = price_element.get_text(strip=True)
+                # 清理价格文本，移除货币符号和逗号
+                price_text = price_text.replace('$', '').replace(',', '')
+                # 如果价格范围格式为"$10.00 to $20.00"，取第一个价格
+                if ' to ' in price_text:
+                    price_text = price_text.split(' to ')[0]
+                try:
+                    item_data['price'] = float(price_text)
+                except ValueError:
+                    item_data['price'] = 0.0
             
             # 商品图片
-            image_element = container.select_one('.s-item__image-img')
-            image_url = image_element['src'] if image_element and 'src' in image_element.attrs else "N/A"
+            img_element = container.select_one('.s-item__image img')
+            if img_element and 'src' in img_element.attrs:
+                image_url = img_element['src']
+                # 有时src可能是占位符，检查data-src属性
+                if 'data-src' in img_element.attrs and img_element['data-src']:
+                    image_url = img_element['data-src']
+                # 如果图片URL是相对路径，添加域名
+                if image_url.startswith('/'):
+                    image_url = 'https://www.ebay.com' + image_url
+                item_data['image_url'] = image_url
             
-            # 商品ID
-            item_id = "unknown"
-            if url != "N/A" and "/itm/" in url:
-                item_id = url.split("/itm/")[1].split("?")[0].split("/")[0]
+            # 获取销售数量
+            sold_element = container.select_one('.s-item__quantitySold')
+            if sold_element:
+                sold_text = sold_element.get_text(strip=True)
+                try:
+                    sold_count = int(''.join(filter(str.isdigit, sold_text)))
+                    item_data['sold_count'] = sold_count
+                except ValueError:
+                    item_data['sold_count'] = 0
+            else:
+                item_data['sold_count'] = 0
             
-            # 获取已售数量信息（如果有）
-            sold_element = container.select_one('.s-item__quantitySold, .s-item__hotness, .s-item__additionalItemHotness')
-            sold_text = sold_element.text.strip() if sold_element else ""
-            sold_count = 0
+            # 添加爬取时间
+            item_data['scraped_at'] = datetime.now().isoformat()
             
-            if sold_text:
-                sold_match = re.search(r'(\d+)', sold_text)
-                if sold_match:
-                    sold_count = int(sold_match.group(1))
+            # 确保至少有ID和标题
+            if 'id' in item_data and 'title' in item_data:
+                return item_data
             
-            # 构建基本商品数据
-            item_data = {
-                'id': item_id,
-                'title': title,
-                'price': price,
-                'url': url,
-                'image_url': image_url,
-                'sold_count': sold_count,
-                'timestamp': int(time.time())
-            }
-            
-            # 添加额外信息字段
-            self._add_optional_fields(container, item_data)
-            
-            return item_data
+            return None
         except Exception as e:
-            logger.error(f"处理商品元素时出错: {e}")
+            self.logger.error(f"解析商品元素时出错: {str(e)}")
             return None
     
     def _add_optional_fields(self, container, item_data):
@@ -398,48 +438,33 @@ class ImprovedEbayStoreScraper:
     
     def update_store_data(self, store_url, store_name):
         """更新店铺数据并检测变化"""
-        logger.info(f"更新店铺数据: {store_name}")
-        max_attempts = 3
+        self.logger.info(f"更新店铺数据: {store_name}")
         
-        for attempt in range(max_attempts):
-            try:
-                # 获取当前商品列表
-                current_items = self.get_store_items(store_url)
-                
-                if not current_items:
-                    if attempt < max_attempts - 1:
-                        logger.warning(f"未获取到商品数据，尝试第 {attempt+1}/{max_attempts} 次")
-                        time.sleep(60)  # 等待一分钟
-                        continue
-                    else:
-                        logger.error(f"无法获取店铺 {store_name} 的商品数据")
-                        
-                        # 从备份恢复
-                        backup_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backups')
-                        os.makedirs(backup_dir, exist_ok=True)
-                        backup_file = os.path.join(backup_dir, f"backup_{store_name}_items.json")
-                        
-                        if os.path.exists(backup_file):
-                            logger.info(f"从备份文件 {backup_file} 恢复")
-                            with open(backup_file, 'r', encoding='utf-8') as f:
-                                current_items = json.load(f)
-                        else:
-                            return {'new_listings': [], 'price_changes': [], 'removed_listings': []}
-                
-                # 成功获取数据，跳出循环
-                break
-                
-            except Exception as e:
-                logger.error(f"更新数据异常: {e}")
-                if attempt < max_attempts - 1:
-                    logger.info(f"将在30秒后重试 ({attempt+1}/{max_attempts})")
-                    time.sleep(30)
-                else:
-                    logger.error("达到最大重试次数，无法更新数据")
-                    return {'new_listings': [], 'price_changes': [], 'removed_listings': []}
+        # 添加随机休眠，防止频繁请求
+        cooldown = random.uniform(15, 30)  # 适当降低以匹配前端期望
+        self.logger.info(f"休眠 {cooldown:.2f} 秒，避免请求过于频繁...")
+        time.sleep(cooldown)
+        
+        # 获取店铺商品
+        items = self.get_store_items(store_url)
+        
+        if not items:
+            logger.error(f"无法获取店铺 {store_name} 的商品数据")
+            
+            # 从备份恢复
+            backup_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backups')
+            os.makedirs(backup_dir, exist_ok=True)
+            backup_file = os.path.join(backup_dir, f"backup_{store_name}_items.json")
+            
+            if os.path.exists(backup_file):
+                logger.info(f"从备份文件 {backup_file} 恢复")
+                with open(backup_file, 'r', encoding='utf-8') as f:
+                    items = json.load(f)
+            else:
+                return {'new_listings': [], 'price_changes': [], 'removed_listings': []}
         
         # 将商品列表转换为以ID为键的字典
-        current_items_dict = {item['id']: item for item in current_items}
+        current_items_dict = {item['id']: item for item in items}
         
         # 获取以前的商品列表
         previous_items_json = self.redis.get(f"store:{store_name}:items")
@@ -481,18 +506,18 @@ class ImprovedEbayStoreScraper:
                     removed_listings.append(previous_item)
         else:
             # 没有旧数据，所有商品都是新上架
-            new_listings = current_items
+            new_listings = items
         
         # 保存当前商品列表到Redis
         if self.redis:
-            self.redis.set(f"store:{store_name}:items", json.dumps(current_items))
+            self.redis.set(f"store:{store_name}:items", json.dumps(items))
             
             # 保存更新时间
             self.redis.set(f"store:{store_name}:last_update", int(time.time()))
             
             # 更新店铺统计信息
             self.redis.set(f"store:{store_name}:stats", json.dumps({
-                'total_items': len(current_items),
+                'total_items': len(items),
                 'new_items': len(new_listings),
                 'price_changes': len(price_changes),
                 'removed_items': len(removed_listings),
@@ -504,7 +529,7 @@ class ImprovedEbayStoreScraper:
         os.makedirs(backup_dir, exist_ok=True)
         backup_file = os.path.join(backup_dir, f"backup_{store_name}_items.json")
         with open(backup_file, 'w', encoding='utf-8') as f:
-            json.dump(current_items, f, ensure_ascii=False, indent=2)
+            json.dump(items, f, ensure_ascii=False, indent=2)
         
         # 记录变更
         if new_listings:
@@ -564,6 +589,12 @@ class ImprovedEbayStoreScraper:
         # 添加各种随机cookie
         cf_clearance = ''.join(random.choices('0123456789abcdef', k=32))
         self.headers['Cookie'] = f"cf_clearance={cf_clearance}; dp1=bu1p/QEBfX0BAX19AQA**{cf_clearance}^"
+
+    def _generate_random_id(self, length=32):
+        """生成随机ID用于cookie"""
+        import string
+        chars = string.ascii_letters + string.digits
+        return ''.join(random.choice(chars) for _ in range(length))
 
 # 测试代码
 if __name__ == "__main__":

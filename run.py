@@ -17,6 +17,8 @@ app = create_app()
 def timestamp_to_date(timestamp):
     """将时间戳转换为日期字符串"""
     from datetime import datetime
+    if timestamp is None or not isinstance(timestamp, (int, float)):
+        return "未知时间"
     dt = datetime.fromtimestamp(timestamp)
     return dt.strftime('%Y-%m-%d %H:%M')
 
@@ -33,4 +35,4 @@ if __name__ == '__main__':
     
     # 运行应用
     logger.info(f"启动应用，运行在端口 {port}")
-    app.run(host='0.0.0.0', port=port, debug=True) 
+    app.run(host='0.0.0.0', port=port, debug=True, threaded=True) 

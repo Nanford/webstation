@@ -16,12 +16,14 @@ def init_scheduler(app):
     """初始化定时任务调度器"""
     scheduler = BackgroundScheduler()
     
-    # 添加定时爬取任务
+    # 注册定时任务
     @scheduler.scheduled_job(
-        IntervalTrigger(seconds=app.config['SCRAPE_INTERVAL']),
-        id='scrape_stores'
+        'interval', hours=3,   # 每3小时执行一次
+        jitter=900,            # 添加±15分钟随机抖动，避免固定时间请求
+        id='scrape_stores_job'
     )
     def scrape_stores_job():
+        """定时爬取所有店铺"""
         logger.info("开始执行定时爬取任务")
         
         # 获取所有需要监控的店铺
