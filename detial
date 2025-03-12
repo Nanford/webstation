@@ -1,0 +1,11 @@
+基于simple_requests_scraper.py的测试功能。我现在想做一个网站，网站的内容功能包括有:
+1、输入店铺商店listing主页的URL，如：“https://www.ebay.com/sch/i.html?_dkr=1&iconV2Request=true&_blrs=recall_filtering&_ssn=yingniao02&store_name=yingniao02&_oac=1”, 然后获取上新的信息，new listing，价格数量等
+2、获取店铺商店listing主页的商品信息，包括商品的名称、价格、图片、描述、链接等
+3、展示相关商品的图片，以及商品的名称、价格、描述等
+4、需要爬取的信息，存到redis数据库，然后可以检测到每天新上的listing,还有已经下架的listing。
+5、需要有图表展示，展示店铺的商品价格走势，以及商品的销量走势。
+6、商品新上架和价格变动的，都需要有邮件发出通知到我指定的邮箱，所以要有邮箱输入口，以及邮件发送功能。
+
+
+
+

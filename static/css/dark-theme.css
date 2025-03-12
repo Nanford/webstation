@@ -1,0 +1,211 @@
+/* 暗色主题 - eBay店铺监控系统 */
+:root {
+  --primary: #3F51B5;
+  --primary-light: #7986CB;
+  --primary-dark: #303F9F;
+  --accent: #FF4081;
+  --background: #121212;
+  --surface: #1E1E1E;
+  --surface-2: #2D2D2D;
+  --text-primary: #FFFFFF;
+  --text-secondary: #B0B0B0;
+  --border: #333333;
+  --success: #4CAF50;
+  --warning: #FFC107;
+  --danger: #F44336;
+  --info: #2196F3;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--text-primary);
+  font-family: 'Roboto', sans-serif;
+}
+
+/* 导航栏样式 */
+.navbar {
+  background-color: var(--primary-dark) !important;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+}
+
+.navbar-brand, .nav-link {
+  color: white !important;
+}
+
+/* 卡片样式 */
+.card {
+  background-color: var(--surface);
+  border: none;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.card-header {
+  background-color: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 12px 20px;
+}
+
+.card-body {
+  padding: 20px;
+}
+
+/* 表格样式 */
+.table {
+  color: var(--text-primary);
+}
+
+.table-striped tbody tr:nth-of-type(odd) {
+  background-color: rgba(255,255,255,0.05);
+}
+
+.table-hover tbody tr:hover {
+  background-color: rgba(63, 81, 181, 0.1);
+}
+
+.table th {
+  border-top: none;
+  border-bottom: 2px solid var(--border);
+  color: var(--primary-light);
+  font-weight: 500;
+}
+
+.table td {
+  border-color: var(--border);
+  vertical-align: middle;
+}
+
+/* 按钮样式 */
+.btn-primary {
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-dark);
+  border-color: var(--primary-dark);
+}
+
+.btn-outline-primary {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.btn-outline-primary:hover {
+  background-color: var(--primary);
+  color: white;
+}
+
+/* 提醒框样式 */
+.alert {
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.alert-info {
+  background-color: rgba(33, 150, 243, 0.15);
+  border-color: rgba(33, 150, 243, 0.3);
+  color: #90CAF9;
+}
+
+/* 图表容器 */
+#priceDistributionChartContainer, 
+#priceHistoryChart {
+  padding: 10px;
+  background-color: var(--surface-2);
+  border-radius: 6px;
+}
+
+/* 模态框样式 */
+.modal-content {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.modal-header {
+  border-bottom-color: var(--border);
+  background-color: var(--surface-2);
+}
+
+.modal-footer {
+  border-top-color: var(--border);
+  background-color: var(--surface-2);
+}
+
+/* 输入框样式 */
+.form-control {
+  background-color: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.form-control:focus {
+  background-color: var(--surface-2);
+  color: var(--text-primary);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 0.2rem rgba(63, 81, 181, 0.25);
+}
+
+/* 自定义链接样式 */
+a {
+  color: var(--primary-light);
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+/* 图标样式美化 */
+.fas {
+  margin-right: 5px;
+}
+
+/* 调试信息区域样式 */
+.debug-info {
+  background-color: var(--surface-2);
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 20px;
+  border-left: 4px solid var(--primary);
+}
+
+/* 刷新按钮 */
+#refreshDashboardBtn {
+  margin-bottom: 20px;
+  transition: all 0.3s;
+}
+
+#refreshDashboardBtn:hover {
+  transform: scale(1.05);
+}
+
+/* 缩略图样式 */
+.img-thumbnail {
+  background-color: var(--surface-2);
+  border-color: var(--border);
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary-dark);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+} 

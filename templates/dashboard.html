@@ -1,0 +1,499 @@
+{% extends "base.html" %}
+
+{% block title %}eBay店铺监控 - 监控面板{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h1 class="mb-4 text-center"><i class="fas fa-tachometer-alt"></i> 监控面板</h1>
+    
+    <div class="row">
+        <div class="col-lg-12 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">监控店铺列表</h5>
+                </div>
+                <div class="card-body">
+                    {% if stores and stores|length > 0 %}
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>店铺名称</th>
+                                        <th>商品数量</th>
+                                        <th>最后更新</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for store in stores %}
+                                    <tr>
+                                        <td>{{ store.name }}</td>
+                                        <td>{{ store.total_items }}</td>
+                                        <td>
+                                            {% if store.last_update %}
+                                                {{ store.last_update|timestamp_to_date }}
+                                            {% else %}
+                                                未知
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-info view-store-items" data-store-id="{{ store.name }}">
+                                                <i class="fas fa-eye"></i> 查看商品
+                                            </button>
+                                            <a href="#" class="btn btn-sm btn-danger delete-store" data-store-id="{{ store.name }}">
+                                                <i class="fas fa-trash-alt"></i> 删除监控
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> 暂无监控的店铺，请先添加要监控的eBay店铺。
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 内容区域 -->
+    <div class="row mt-3">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">店铺商品列表</h5>
+                    <div class="d-flex">
+                        <div class="dropdown me-2">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="sortDropdown" data-bs-toggle="dropdown">
+                                <i class="fas fa-sort"></i> 排序
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="sortDropdown">
+                                <li><a class="dropdown-item sort-option" data-sort="price-asc" href="#">价格从低到高</a></li>
+                                <li><a class="dropdown-item sort-option" data-sort="price-desc" href="#">价格从高到低</a></li>
+                                <li><a class="dropdown-item sort-option" data-sort="discount-desc" href="#">折扣最大</a></li>
+                                <li><a class="dropdown-item sort-option" data-sort="sold-desc" href="#">销量最高</a></li>
+                                <li><a class="dropdown-item sort-option" data-sort="newest" href="#">最新上架</a></li>
+                            </ul>
+                        </div>
+                        <button class="btn btn-sm btn-primary" id="refreshItemsBtn">
+                            <i class="fas fa-sync-alt"></i> 刷新
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="itemsList">
+                        {% if stores and stores[0]['items'] %}
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 70px">图片</th>
+                                            <th style="width: 35%">标题</th>
+                                            <th style="width: 120px">价格</th>
+                                            <th style="width: 80px">状态</th>
+                                            <th style="width: 120px">购买方式</th>
+                                            <th style="width: 100px">运费</th>
+                                            <th style="width: 120px">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in stores[0]['items'] %}
+                                        <tr>
+                                            <td>
+                                                <a href="{{ item.image_url }}" data-bs-toggle="lightbox">
+                                                    <img src="{{ item.image_url }}" alt="{{ item.title }}" class="img-thumbnail" style="max-width: 60px;">
+                                                </a>
+                                            </td>
+                                            <td>
+                                                <a href="{{ url_for('main.item_details', item_id=item.id) }}" class="text-decoration-none">
+                                                    {{ item.title }}
+                                                    {% if item.discount_percent and item.discount_percent > 0 %}
+                                                    <span class="badge bg-danger ms-1">-{{ item.discount_percent }}%</span>
+                                                    {% endif %}
+                                                </a>
+                                                <small class="d-block text-muted">{{ item.seller_info|default('') }}</small>
+                                            </td>
+                                            <td>
+                                                <div class="fw-bold">${{ item.price }}</div>
+                                                {% if item.original_price and item.original_price > 0 %}
+                                                <small class="text-muted text-decoration-line-through">${{ item.original_price }}</small>
+                                                {% endif %}
+                                            </td>
+                                            <td><span class="badge bg-secondary">{{ item.status|default('Unknown') }}</span></td>
+                                            <td>{{ item.purchase_type|default('Unknown') }}</td>
+                                            <td>
+                                                {{ item.shipping|default('Unknown') }}
+                                                {% if 'Free' in item.shipping %}
+                                                <i class="fas fa-truck text-success" title="免费配送"></i>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-success mb-1">销量: {{ item.sold_count }}</span>
+                                                <div class="btn-group btn-group-sm">
+                                                    <a href="{{ url_for('main.item_details', item_id=item.id) }}" class="btn btn-outline-primary">
+                                                        <i class="fas fa-info-circle"></i>
+                                                    </a>
+                                                    <button class="btn btn-outline-info view-history-btn" 
+                                                            data-bs-toggle="modal" 
+                                                            data-bs-target="#priceHistoryModal"
+                                                            data-item-id="{{ item.id }}">
+                                                        <i class="fas fa-chart-line"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle"></i> 暂无商品数据。
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-chart-bar"></i> 价格分布
+                    </h5>
+                    <span class="badge bg-primary">
+                        总共: {% if stores and stores[0]['items'] %}{{ stores[0]['items']|length }}{% else %}0{% endif %} 商品
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div id="price-data" 
+                         data-prices='{% if stores and stores[0]['items'] %}
+                                     [{% for item in stores[0]['items'] %}{{ item.price }}{% if not loop.last %},{% endif %}{% endfor %}]{% else %}[]{% endif %}'
+                          style="display:none;">
+                    </div>
+                    <div id="priceDistributionChartContainer">
+                        <canvas id="priceDistributionChart" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 价格历史模态框 -->
+<div class="modal fade" id="priceHistoryModal" tabindex="-1" aria-labelledby="priceHistoryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="priceHistoryModalLabel">商品价格历史</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="priceHistoryContent" class="d-none">
+                    <div class="mb-3">
+                        <a href="#" id="itemLinkInModal" target="_blank" class="text-decoration-none">
+                            <i class="fas fa-external-link-alt"></i> <span id="itemTitleInModal"></span>
+                        </a>
+                    </div>
+                    <canvas id="priceHistoryChart" height="200"></canvas>
+                    <div id="noHistoryMessage" class="text-center text-muted py-3 d-none">
+                        <i class="fas fa-info-circle fa-2x mb-2"></i>
+                        <p>暂无价格历史数据</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 图片放大显示模态框 -->
+<div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">商品图片</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body text-center">
+        <img src="" id="fullSizeImage" class="img-fluid" alt="商品大图">
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="debug-info">
+  <h3>调试信息</h3>
+  <p>监控店铺数: {{ stores|length }}</p>
+  {% for store in stores %}
+  <div>
+    <h4>{{ store.name }}</h4>
+    <p>商品数: {{ store.total_items }}</p>
+    <p>最后更新时间: 
+      {% if store.last_update %}
+        {{ store.last_update|timestamp_to_date }}
+      {% else %}
+        未知
+      {% endif %}
+    </p>
+    {% if store['items'] %}
+      <ul>
+      {% for item in store['items'] %}
+        <li>{{ item.title }} - ${{ item.price }}</li>
+      {% endfor %}
+      </ul>
+    {% else %}
+      <p>暂无商品数据</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<!-- 在适当位置添加刷新按钮 -->
+<div class="mb-3">
+    <button id="refreshDashboardBtn" class="btn btn-outline-primary">
+        <i class="fas fa-sync-alt"></i> 刷新数据
+    </button>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// 格式化时间戳为日期
+function formatTimestamp(timestamp) {
+    let date = new Date(timestamp * 1000);
+    return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+// 生成价格分布图表
+function createPriceDistributionChart() {
+    // 方法1: 使用HTML数据属性
+    var pricesElement = document.getElementById('price-data');
+    var prices = pricesElement ? JSON.parse(pricesElement.dataset.prices) : [];
+    
+    // 如果没有价格数据，则不创建图表
+    if (prices.length === 0) {
+        document.getElementById('priceDistributionChartContainer').innerHTML = 
+            '<div class="alert alert-info">暂无商品数据，无法生成价格分布图</div>';
+        return;
+    }
+    
+    // 计算价格分布区间
+    let min = Math.min(...prices);
+    let max = Math.max(...prices);
+    let range = max - min;
+    let binCount = Math.min(10, prices.length);
+    let binWidth = range / binCount;
+    
+    // 初始化区间计数
+    let bins = Array(binCount).fill(0);
+    let binLabels = [];
+    
+    // 设置区间标签
+    for (let i = 0; i < binCount; i++) {
+        let binStart = min + i * binWidth;
+        let binEnd = binStart + binWidth;
+        binLabels.push('$' + binStart.toFixed(2) + ' - $' + binEnd.toFixed(2));
+    }
+    
+    // 统计每个区间的商品数量
+    prices.forEach(price => {
+        let binIndex = Math.min(Math.floor((price - min) / binWidth), binCount - 1);
+        bins[binIndex]++;
+    });
+    
+    // 创建图表
+    let ctx = document.getElementById('priceDistributionChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: binLabels,
+            datasets: [{
+                label: '商品数量',
+                data: bins,
+                backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: '商品数量'
+                    },
+                    ticks: {
+                        precision: 0
+                    },
+                    grid: {
+                        display: false }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: '价格区间'
+                    }
+                }
+            },
+            plugins: {
+                title: {
+                    display: true,
+                    text: '商品价格分布'
+                }
+            }
+        }
+    });
+}
+
+// 加载商品价格历史
+function loadPriceHistory(itemId) {
+    $.ajax({
+        url: '/api/item/' + itemId + '/price_history',
+        method: 'GET',
+        success: function(data) {
+            let historyData = data.history;
+            let itemData = data.item;
+            
+            // 更新模态框标题和链接
+            $('#itemTitleInModal').text(itemData.title);
+            $('#itemLinkInModal').attr('href', itemData.url);
+            
+            if (historyData.length > 1) {
+                let labels = [];
+                let prices = [];
+                
+                historyData.forEach(function(point) {
+                    labels.push(formatTimestamp(point.timestamp));
+                    prices.push(point.price);
+                });
+                
+                let ctx = document.getElementById('priceHistoryChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '价格 ($)',
+                            data: prices,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: '价格 ($)'
+                                }
+                            },
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: '日期'
+                                }
+                            }
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: '价格历史走势'
+                            }
+                        }
+                    }
+                });
+                
+                $('#priceHistoryContent').removeClass('d-none');
+                $('#noHistoryMessage').addClass('d-none');
+            } else {
+                $('#priceHistoryContent').removeClass('d-none');
+                $('#noHistoryMessage').removeClass('d-none');
+            }
+        },
+        error: function() {
+            $('#priceHistoryContent').removeClass('d-none');
+            $('#noHistoryMessage').removeClass('d-none').text('获取价格历史数据失败');
+        }
+    });
+}
+
+$(document).ready(function() {
+    // 修改：只在页面初始加载时执行一次，不再自动刷新
+    createPriceDistributionChart();
+    
+    // 绑定查看价格历史按钮事件
+    $('.view-history-btn').click(function() {
+        let itemId = $(this).data('item-id');
+        loadPriceHistory(itemId);
+    });
+    
+    // 刷新按钮事件绑定
+    $('#refreshDashboardBtn').click(function() {
+        location.reload();
+    });
+
+    // 图片点击放大
+    $('a[data-bs-toggle="lightbox"]').click(function(e) {
+        e.preventDefault();
+        $('#fullSizeImage').attr('src', $(this).attr('href'));
+        $('#imageModal').modal('show');
+    });
+
+    $('.sort-option').click(function(e) {
+        e.preventDefault();
+        const sortType = $(this).data('sort');
+        const $rows = $('#itemsList table tbody tr').get();
+        
+        $rows.sort(function(a, b) {
+            let compA, compB;
+            
+            if (sortType === 'price-asc' || sortType === 'price-desc') {
+                compA = parseFloat($(a).find('td:eq(2) .fw-bold').text().replace('$', '')) || 0;
+                compB = parseFloat($(b).find('td:eq(2) .fw-bold').text().replace('$', '')) || 0;
+                return sortType === 'price-asc' ? compA - compB : compB - compA;
+            } 
+            else if (sortType === 'discount-desc') {
+                const getDiscount = (el) => {
+                    const badge = $(el).find('.badge.bg-danger');
+                    return badge.length ? parseInt(badge.text().replace(/[-%]/g, '')) : 0;
+                };
+                return getDiscount(b) - getDiscount(a);
+            }
+            else if (sortType === 'sold-desc') {
+                compA = parseInt($(a).find('.badge.bg-success').text().replace('销量: ', '')) || 0;
+                compB = parseInt($(b).find('.badge.bg-success').text().replace('销量: ', '')) || 0;
+                return compB - compA;
+            }
+            
+            return 0;
+        });
+        
+        $.each($rows, function(index, row) {
+            $('#itemsList table tbody').append(row);
+        });
+        
+        // 更新表格状态指示
+        $('#sortDropdown').html('<i class="fas fa-sort"></i> ' + $(this).text());
+    });
+});
+</script>
+{% endblock %}

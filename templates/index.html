@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}eBay店铺监控 - 首页{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="text-center mb-5">
+                <h1 class="display-4 fw-bold mb-4">eBay店铺监控系统</h1>
+                <p class="lead text-secondary">实时追踪eBay店铺商品变化，掌握价格波动趋势</p>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title mb-0">添加eBay店铺监控</h3>
+                </div>
+                <div class="card-body">
+                    <form id="addStoreForm">
+                        <div class="mb-3">
+                            <label for="store_url" class="form-label">
+                                <i class="fas fa-link"></i> eBay店铺URL
+                            </label>
+                            <input type="url" class="form-control" id="store_url" name="store_url" 
+                                   placeholder="例如: https://www.ebay.com/str/storename" required>
+                            <small class="form-text text-secondary">请输入完整的eBay店铺URL</small>
+                        </div>
+                        <div class="mb-3">
+                            <label for="notify_email" class="form-label">
+                                <i class="fas fa-envelope"></i> 通知邮箱 (可选)
+                            </label>
+                            <input type="email" class="form-control" id="notify_email" name="notify_email" 
+                                   placeholder="有新商品或价格变动时通知我">
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                                <i class="fas fa-plus-circle"></i> 添加监控
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <div id="statusMessage" class="mt-4 d-none"></div>
+            
+            <div class="text-center mt-5">
+                <a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-primary">
+                    <i class="fas fa-tachometer-alt"></i> 前往监控面板
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-5">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-chart-line fa-3x text-primary mb-3"></i>
+                    <h4>价格趋势分析</h4>
+                    <p class="text-secondary">跟踪商品价格历史变化，把握最佳购买时机</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-bell fa-3x text-primary mb-3"></i>
+                    <h4>变动通知</h4>
+                    <p class="text-secondary">新商品上架、价格变动第一时间通知</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-search fa-3x text-primary mb-3"></i>
+                    <h4>商品数据统计</h4>
+                    <p class="text-secondary">自动汇总分析店铺商品价格分布</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    $('#addStoreForm').submit(function(e) {
+        e.preventDefault();
+        
+        $('#submitBtn').html('<i class="fas fa-spinner fa-spin"></i> 处理中...').prop('disabled', true);
+        
+        var formData = $(this).serialize();
+        
+        $.ajax({
+            type: 'POST',
+            url: '/add_store',
+            data: formData,
+            success: function(response) {
+                if (response.success) {
+                    $('#statusMessage').removeClass('d-none alert-danger').addClass('alert alert-success')
+                        .html('<i class="fas fa-check-circle"></i> ' + response.message);
+                    setTimeout(function() {
+                        window.location.href = '/dashboard?store_name=' + response.store_name;
+                    }, 2000);
+                } else {
+                    $('#statusMessage').removeClass('d-none alert-success').addClass('alert alert-danger')
+                        .html('<i class="fas fa-exclamation-circle"></i> ' + response.message);
+                    $('#submitBtn').html('<i class="fas fa-plus-circle"></i> 添加监控').prop('disabled', false);
+                }
+            },
+            error: function() {
+                $('#statusMessage').removeClass('d-none alert-success').addClass('alert alert-danger')
+                    .html('<i class="fas fa-exclamation-triangle"></i> 服务器错误，请稍后再试');
+                $('#submitBtn').html('<i class="fas fa-plus-circle"></i> 添加监控').prop('disabled', false);
+            }
+        });
+    });
+});
+</script>
+{% endblock %} 

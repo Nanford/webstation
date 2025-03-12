@@ -1,0 +1,120 @@
+eBay商品分析报告 - 生成时间: 2025-03-10 21:06:21
+
+总商品数: 120
+
+【价格统计】
+平均价格: $70.99
+最低价格: $17.47
+最高价格: $569.99
+中位数价格: $46.45
+
+【价格分布】
+$0-$10: 0件商品 (0.0%)
+$10-$20: 4件商品 (3.3%)
+$20-$50: 64件商品 (53.3%)
+$50-$100: 30件商品 (25.0%)
+$100以上: 22件商品 (18.3%)
+
+
+===================== 【最新商品详情】 =====================
+
+
+--------------------------------------------------------------------------------
+商品 1:
+【商品名称】: Dog Crate Dog Cage Dog Kennel Metal Double-Door Folding Animal Pet Cage Wheels
+【商品价格】: $148.11 to $277.83
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: Dog Crate Dog Cage Dog Kennel Metal Double-Door Folding Animal Pet Cage Wheels - Brand New
+【详情链接】: https://www.ebay.com/itm/256846763643?itmmeta=01JP02KCQDGQ0PEVP3MXERARDF&hash=item3bcd42967b:g:4GEAAeSw7jpnysUD
+
+--------------------------------------------------------------------------------
+商品 2:
+【商品名称】: Heavy Duty Dog Kennel Outdoor Anti-UV Cover Dog Playpen House Fence Pet Crate
+【商品价格】: $150.87
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: Heavy Duty Dog Kennel Outdoor Anti-UV Cover Dog Playpen House Fence Pet Crate - Brand New
+【详情链接】: https://www.ebay.com/itm/256846738370?itmmeta=01JP02KCQDTJ4P13H0XFJW7QT1&hash=item3bcd4233c2:g:pI8AAeSwUVdnyr9M
+
+--------------------------------------------------------------------------------
+商品 3:
+【商品名称】: 71" Large Dog Crates for 2 Dogs Wooden Double Dog Crate with 3 Drawers Storage
+【商品价格】: $340.39
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: 71" Large Dog Crates for 2 Dogs Wooden Double Dog Crate with 3 Drawers Storage - Brand New
+【详情链接】: https://www.ebay.com/itm/256846709628?itmmeta=01JP02KCQDX7Z7GGRKRWJBJD8Y&hash=item3bcd41c37c:g:nDgAAeSwiM5nyrtQ
+
+--------------------------------------------------------------------------------
+商品 4:
+【商品名称】: Metal Garden Tool Storage Rack with Wheels 3-Tiers Garage Organizer with Hooks
+【商品价格】: $88.31
+【商品状态】: Brand New
+【商品品类】: Garden
+【运费信息】: Free delivery
+【商品描述】: Metal Garden Tool Storage Rack with Wheels 3-Tiers Garage Organizer with Hooks - Brand New
+【详情链接】: https://www.ebay.com/itm/256845434551?itmmeta=01JP02KCQDK2MQAR2AWAS7Z8Q1&hash=item3bcd2e4eb7:g:PfYAAeSwPfRnyZy2
+
+--------------------------------------------------------------------------------
+商品 5:
+【商品名称】: NSF Stainless Steel Prep Table 36/48in with Adjustable Undershelf and Backsplash
+【商品价格】: $150.87 to $155.47
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: NSF Stainless Steel Prep Table 36/48in with Adjustable Undershelf and Backsplash - Brand New
+【详情链接】: https://www.ebay.com/itm/256845408260?itmmeta=01JP02KCQDMSYZQHVB2HTKJA3K&hash=item3bcd2de804:g:IHIAAeSwtW1nyZS7
+
+--------------------------------------------------------------------------------
+商品 6:
+【商品名称】: Folding Kitchen Prep Table 48" X 24" Stainless Steel Commercial Work Prep Tables
+【商品价格】: $157.31
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: Folding Kitchen Prep Table 48" X 24" Stainless Steel Commercial Work Prep Tables - Brand New
+【详情链接】: https://www.ebay.com/itm/256845113411?itmmeta=01JP02KCQDRX76E1KB7Z9W2G54&hash=item3bcd296843:g:OLcAAeSw6CBnyU8O
+
+--------------------------------------------------------------------------------
+商品 7:
+【商品名称】: Kitchen Prep Table 48" x 24" NSF Stainless Steel Work Prep Table with Undershelf
+【商品价格】: $174.79
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: Kitchen Prep Table 48" x 24" NSF Stainless Steel Work Prep Table with Undershelf - Brand New
+【详情链接】: https://www.ebay.com/itm/256845111038?itmmeta=01JP02KCQD0F5G17K7NRGJ13ZF&hash=item3bcd295efe:g:NXoAAeSw6CBnyU4R
+
+--------------------------------------------------------------------------------
+商品 8:
+【商品名称】: Stainless Steel Sink 3 Compartment Freestanding Kitchen Sink Commercial Utility
+【商品价格】: $217.11
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: Stainless Steel Sink 3 Compartment Freestanding Kitchen Sink Commercial Utility - Brand New
+【详情链接】: https://www.ebay.com/itm/256845093160?itmmeta=01JP02KCQDMF8A6XRMB4ES9WRY&hash=item3bcd291928:g:v4wAAeSwtfhnyUg6
+
+--------------------------------------------------------------------------------
+商品 9:
+【商品名称】: Stainless Steel Sink 2 Compartment Freestanding Kitchen Sink Commercial Utility
+【商品价格】: $207.54
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: Stainless Steel Sink 2 Compartment Freestanding Kitchen Sink Commercial Utility - Brand New
+【详情链接】: https://www.ebay.com/itm/256845086822?itmmeta=01JP02KCQEPN63JBJSTR0ZK80F&hash=item3bcd290066:g:HSwAAeSwz0hnyUak
+
+--------------------------------------------------------------------------------
+商品 10:
+【商品名称】: Stainless Steel Utility Sink for Commercial Kitchen 21.3" Wide with Drainboard
+【商品价格】: $172.95
+【商品状态】: Brand New
+【商品品类】: N/A
+【运费信息】: Free delivery
+【商品描述】: Stainless Steel Utility Sink for Commercial Kitchen 21.3" Wide with Drainboard - Brand New
+【详情链接】: https://www.ebay.com/itm/256845080479?itmmeta=01JP02KCQEQWXTYQJAFG0A2K8W&hash=item3bcd28e79f:g:yDcAAOSwEiZnyWG7
