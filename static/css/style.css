@@ -74,3 +74,27 @@ body {
         font-size: 1.25rem;
     }
 }
+
+/* 商品卡片 */
+.product-card {
+    transition: transform 0.3s, box-shadow 0.3s;
+    height: 100%;
+}
+
+.product-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.card-img-top {
+    padding: 10px;
+    background-color: #f8f9fa;
+}
+
+/* 新上架标识 */
+.badge.bg-danger {
+    font-weight: 500;
+    font-size: 0.7rem;
+    padding: 5px 8px;
+    z-index: 10;
+}

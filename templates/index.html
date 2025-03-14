@@ -31,6 +31,7 @@
                             </label>
                             <input type="email" class="form-control" id="notify_email" name="notify_email" 
                                    placeholder="有新商品或价格变动时通知我">
+                            <small class="form-text text-secondary">设置后将用于所有店铺的通知</small>
                         </div>
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
@@ -42,6 +43,15 @@
             </div>
             
             <div id="statusMessage" class="mt-4 d-none"></div>
+            <div id="loadingMessage" class="alert alert-info mt-4 d-none">
+                <div class="d-flex align-items-center">
+                    <div class="spinner-border text-primary me-3" role="status"></div>
+                    <div>
+                        <h5 class="mb-1">正在添加监控...</h5>
+                        <p class="mb-0">正在爬取店铺数据，这可能需要10-30秒，请耐心等待。</p>
+                    </div>
+                </div>
+            </div>
             
             <div class="text-center mt-5">
                 <a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-primary">

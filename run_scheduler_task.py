@@ -36,7 +36,7 @@ def run_scheduler_task():
         
         # 初始化爬虫和邮件通知
         scraper = ImprovedEbayStoreScraper(redis_client=redis_client)
-        # notifier = EmailNotifier()
+        notifier = EmailNotifier()
         
         # 遍历每个店铺并更新数据
         for key in store_keys:
@@ -50,14 +50,43 @@ def run_scheduler_task():
                 store_data = json.loads(store_data_json.decode('utf-8'))
                 store_url = store_data.get('url')
                 store_name = store_data.get('name')
+                notify_email = store_data.get('notify_email')
+                
+                # 获取系统默认邮箱
+                if not notify_email:
+                    default_email = redis_client.get('system:notify_email')
+                    if default_email:
+                        notify_email = default_email.decode('utf-8') if isinstance(default_email, bytes) else default_email
+                        logger.info(f"使用系统默认邮箱: {notify_email}")
                 
                 if not store_url or not store_name:
                     continue
                 
                 logger.info(f"正在爬取店铺: {store_name}")
+                logger.info(f"爬取过程可能需要10-30秒，请耐心等待...")
                 
                 # 更新店铺数据并检测变化
                 changes = scraper.update_store_data(store_url, store_name)
+                
+                # 如果有邮箱和变更，发送通知
+                if notify_email and (changes['new_listings'] or changes['price_changes']):
+                    # 通知新上架商品
+                    if changes['new_listings']:
+                        logger.info(f"发送{len(changes['new_listings'])}个新商品通知到: {notify_email}...")
+                        notifier.notify_new_listings(
+                            notify_email,
+                            store_name, 
+                            changes['new_listings']
+                        )
+                    
+                    # 通知价格变动
+                    if changes['price_changes']:
+                        logger.info(f"发送{len(changes['price_changes'])}个价格变动通知到: {notify_email}...")
+                        notifier.notify_price_changes(
+                            notify_email,
+                            store_name, 
+                            changes['price_changes']
+                        )
                 
                 logger.info(f"店铺 {store_name} 更新完成. 新商品: {len(changes['new_listings'])}, "
                            f"价格变动: {len(changes['price_changes'])}, 下架商品: {len(changes['removed_listings'])}")

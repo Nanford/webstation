@@ -15,12 +15,13 @@ class Config:
     REDIS_USERNAME = None  # 或者设置实际用户名
     
     # 邮件配置
-    MAIL_SERVER = os.environ.get('MAIL_SERVER') or 'smtp.gmail.com'
-    MAIL_PORT = int(os.environ.get('MAIL_PORT') or 587)
-    MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS') or True
-    MAIL_USERNAME = os.environ.get('MAIL_USERNAME') or 'myemail@gmail.com'
-    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD') or 'password'
-    MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER') or 'your-email@gmail.com'
+    MAIL_SERVER = 'smtp.qq.com'
+    MAIL_PORT = 465
+    MAIL_USE_TLS = False
+    MAIL_USE_SSL = True
+    MAIL_USERNAME = '12345678@qq.com'  # 例如：12345678@qq.com
+    MAIL_PASSWORD = '不是QQ密码'  # 不是QQ密码
+    MAIL_DEFAULT_SENDER = '12345678@qq.com'
     
     # 爬虫配置
     SCRAPE_INTERVAL = int(os.environ.get('SCRAPE_INTERVAL') or 3600)  # 默认每小时爬取一次

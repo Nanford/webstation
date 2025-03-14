@@ -16,6 +16,7 @@ class EmailNotifier:
         self.server = Config.MAIL_SERVER
         self.port = Config.MAIL_PORT
         self.use_tls = Config.MAIL_USE_TLS
+        self.use_ssl = getattr(Config, 'MAIL_USE_SSL', False)  # 添加SSL支持
         self.username = Config.MAIL_USERNAME
         self.password = Config.MAIL_PASSWORD
         self.default_sender = Config.MAIL_DEFAULT_SENDER
@@ -36,63 +37,127 @@ class EmailNotifier:
                 msg.attach(MIMEText(body, 'plain'))
             
             # 连接到SMTP服务器并发送邮件
-            with smtplib.SMTP(self.server, self.port) as server:
-                if self.use_tls:
-                    server.starttls()
-                server.login(self.username, self.password)
-                server.sendmail(self.default_sender, recipient, msg.as_string())
+            if self.use_ssl:
+                # 使用直接管理SMTP_SSL连接，而不是with语句
+                try:
+                    server = smtplib.SMTP_SSL(self.server, self.port)
+                    server.login(self.username, self.password)
+                    result = server.sendmail(self.default_sender, recipient, msg.as_string())
+                    # 检查sendmail的返回结果，空字典表示成功
+                    send_success = (result == {})
+                    try:
+                        server.quit()
+                    except:
+                        # 忽略关闭连接时的错误
+                        pass
+                    # 如果sendmail成功，则认为邮件发送成功
+                    if send_success:
+                        logger.info(f"邮件已发送至 {recipient}")
+                        return True
+                    else:
+                        logger.error(f"发送邮件失败，返回结果: {result}")
+                        return False
+                except Exception as ssl_error:
+                    logger.error(f"SSL邮件发送失败: {ssl_error}")
+                    raise
+            else:
+                with smtplib.SMTP(self.server, self.port) as server:
+                    if self.use_tls:
+                        server.starttls()
+                    server.login(self.username, self.password)
+                    server.sendmail(self.default_sender, recipient, msg.as_string())
             
-            logger.info(f"邮件已发送至 {recipient}")
-            return True
+            # 非SSL模式下的成功信息已经在上面的代码中处理
+            if not self.use_ssl:
+                logger.info(f"邮件已发送至 {recipient}")
+                return True
+            return False  # 如果代码执行到这里，说明SSL模式下没有成功
         
         except Exception as e:
             logger.error(f"发送邮件失败: {e}")
             return False
     
     def notify_new_listings(self, recipient, store_name, new_items):
-        """通知新上架商品"""
+        """新商品通知"""
         if not new_items:
-            return False
+            return True
         
-        subject = f"{store_name} - 发现 {len(new_items)} 个新上架商品"
+        subject = f"eBay店铺 {store_name} - 发现{len(new_items)}个新商品"
         
-        # 构建HTML邮件内容
         html = f"""
         <html>
         <head>
             <style>
-                body {{ font-family: Arial, sans-serif; }}
-                .container {{ max-width: 800px; margin: 0 auto; }}
-                .header {{ background-color: #4CAF50; color: white; padding: 10px; text-align: center; }}
-                .item-list {{ padding: 10px; }}
-                .item {{ border-bottom: 1px solid #ddd; padding: 10px; margin-bottom: 10px; }}
-                .item-header {{ display: flex; justify-content: space-between; }}
-                .item-title {{ font-weight: bold; }}
-                .item-price {{ color: #e63946; font-weight: bold; }}
-                .item-image {{ max-width: 150px; max-height: 150px; margin-right: 10px; float: left; }}
+                /* 邮件样式 */
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 0;
+                    padding: 0;
+                    background-color: #f4f4f4;
+                }}
+                .container {{
+                    width: 100%;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background-color: #ffffff;
+                    padding: 20px;
+                }}
+                .header {{
+                    text-align: center;
+                    padding: 10px;
+                    background-color: #3F51B5;
+                    color: white;
+                }}
+                .item {{
+                    margin: 20px 0;
+                    border-bottom: 1px solid #eee;
+                    padding-bottom: 20px;
+                }}
+                .item-image {{
+                    max-width: 200px;
+                    height: auto;
+                }}
+                .new-listing-badge {{
+                    display: inline-block;
+                    background-color: #ff5722;
+                    color: white;
+                    font-size: 12px;
+                    padding: 3px 8px;
+                    border-radius: 3px;
+                    margin-right: 5px;
+                }}
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <h2>{store_name} - 新上架商品通知</h2>
-                    <p>发现 {len(new_items)} 个新上架商品</p>
+                    <h2>eBay店铺 {store_name} - 新商品通知</h2>
                 </div>
-                <div class="item-list">
+                
+                <p>亲爱的用户，</p>
+                <p>您监控的eBay店铺 <strong>{store_name}</strong> 有 <strong>{len(new_items)}</strong> 个新商品:</p>
+                
+                <div class="items">
         """
         
         for item in new_items:
+            price = item.get('price', 0)
+            shipping = item.get('shipping', '未知')
+            status = item.get('status', '未知')
+            is_new_listing = item.get('is_new_listing', False)
+            
             html += f"""
                     <div class="item">
-                        <div class="item-header">
-                            <div class="item-title">{item.get('title', 'N/A')}</div>
-                            <div class="item-price">${item.get('price', 0):.2f}</div>
+                        <h3>
+                            {f'<span class="new-listing-badge">新上架</span>' if is_new_listing else ''}
+                            <a href="{item.get('url', '#')}">{item.get('title', '未知标题')}</a>
+                        </h3>
+                        <div>
+                            <img src="{item.get('image_url', '')}" class="item-image" alt="{item.get('title', '商品图片')}">
                         </div>
-                        <p>
-                            <img class="item-image" src="{item.get('image_url', '')}" alt="商品图片">
-                            <a href="{item.get('url', '#')}" target="_blank">查看商品</a>
-                        </p>
-                        <div style="clear: both;"></div>
+                        <p>价格: <strong>${price:.2f}</strong></p>
+                        <p>运费: {shipping}</p>
+                        <p>状态: {status}</p>
                     </div>
             """
         

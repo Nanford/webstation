@@ -3,151 +3,139 @@
 {% block title %}eBay店铺监控 - 监控面板{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <!-- 页面标题 -->
-    <div class="row mt-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center">
-                <h2 class="mb-0">
-                    <i class="fas fa-chart-line me-2"></i> eBay店铺监控系统
-                </h2>
-                <button id="refreshDashboardBtn" class="btn btn-primary">
-                    <i class="fas fa-sync-alt"></i> 刷新数据
-                </button>
-            </div>
-            <div id="statusMessage" class="alert d-none mt-3"></div>
-        </div>
-    </div>
-    
-    <!-- 店铺列表 -->
-    <div class="card mt-4">
-        <div class="card-header bg-dark text-white">
-            <h5 class="mb-0"><i class="fas fa-store me-2"></i>监控店铺列表</h5>
-        </div>
-        <div class="card-body">
-            {% if stores %}
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>店铺名称</th>
-                            <th>商品数量</th>
-                            <th>最后更新</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for store in stores %}
-                        <tr>
-                            <td>{{ store.name }}</td>
-                            <td>{{ store.items_count }}</td>
-                            <td>{% if store.last_update %}{{ store.last_update|timestamp_to_date }}{% else %}未知{% endif %}</td>
-                            <td>
-                                <a href="{{ url_for('main.dashboard', store_name=store.name) }}" class="btn btn-sm btn-info">
-                                    <i class="fas fa-eye"></i> 查看商品
-                                </a>
-                                <button class="btn btn-sm btn-danger delete-store" data-store-id="{{ store.name }}">
-                                    <i class="fas fa-trash"></i> 删除监控
-                                </button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            {% else %}
-                <div class="alert alert-info">
-                    <p><i class="fas fa-info-circle me-2"></i> 暂无监控店铺数据</p>
-                    <p>您可以点击右上角的"添加店铺"按钮来添加一个eBay店铺进行监控</p>
+<div class="container py-4">
+    <div class="row">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">监控店铺</h5>
                 </div>
-            {% endif %}
-        </div>
-    </div>
-    
-    <!-- 店铺详情内容 -->
-    {% if selected_store %}
-        <!-- 价格分布图 -->
-        <div class="card mt-4">
-            <div class="card-header bg-dark text-white d-flex justify-content-between">
-                <h5 class="mb-0"><i class="fas fa-chart-bar me-2"></i>价格分布</h5>
-                <span class="badge bg-primary">总计: {{ selected_store.items_count }} 商品</span>
+                <div class="card-body p-0">
+                    <div class="list-group list-group-flush">
+                        {% for store in stores %}
+                        <a href="{{ url_for('main.dashboard', store_name=store.name) }}" 
+                           class="list-group-item list-group-item-action {% if selected_store and selected_store.name == store.name %}active{% endif %}">
+                            {{ store.name }}
+                            <span class="badge bg-primary rounded-pill float-end">
+                                {{ store.item_count }}
+                            </span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
             </div>
-            <div class="card-body">
-                <div style="height: 300px;">
-                    <canvas id="priceChart"></canvas>
+            
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">添加店铺</h5>
+                </div>
+                <div class="card-body">
+                    <a href="{{ url_for('main.index') }}" class="btn btn-primary w-100">
+                        <i class="fas fa-plus-circle"></i> 添加新店铺
+                    </a>
                 </div>
             </div>
         </div>
         
-        <!-- 商品列表 -->
-        <div class="card mt-4">
-            <div class="card-header bg-dark text-white d-flex justify-content-between">
-                <h5 class="mb-0"><i class="fas fa-list me-2"></i>商品列表</h5>
-                <button id="refreshItemsBtn" class="btn btn-sm btn-primary">
-                    <i class="fas fa-sync"></i> 刷新
-                </button>
-            </div>
-            <div class="card-body">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>图片</th>
-                            <th>标题</th>
-                            <th class="price-col">价格</th>
-                            <th>状态</th>
-                            <th>购买方式</th>
-                            <th>运费</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+        <div class="col-md-9">
+            {% if selected_store %}
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">{{ selected_store.name }}</h5>
+                    <div>
+                        <span class="badge bg-info">
+                            <i class="fas fa-tag"></i> {{ selected_store.item_count }} 件商品
+                        </span>
+                        <span class="badge bg-secondary ms-1">
+                            <i class="fas fa-clock"></i> 
+                            最后更新: {{ selected_store.last_update|default('从未') }}
+                        </span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <a href="{{ selected_store.url }}" target="_blank" class="btn btn-outline-secondary btn-sm">
+                                    <i class="fas fa-external-link-alt"></i> 访问店铺
+                                </a>
+                                <button id="removeStoreBtn" class="btn btn-outline-danger btn-sm ms-2"
+                                        data-store="{{ selected_store.name }}">
+                                    <i class="fas fa-trash-alt"></i> 删除监控
+                                </button>
+                            </div>
+                            <button id="refreshStoreBtn" class="btn btn-primary">
+                                <i class="fas fa-sync-alt"></i> 刷新数据
+                            </button>
+                        </div>
+                        <div id="statusMessage" class="alert d-none mt-3"></div>
+                        <div id="refreshLoading" class="alert alert-info mt-3 d-none">
+                            <div class="d-flex align-items-center">
+                                <div class="spinner-border text-primary me-3" role="status"></div>
+                                <div>
+                                    <h5 class="mb-1">正在刷新数据...</h5>
+                                    <p class="mb-0">正在爬取最新店铺数据，这可能需要10-30秒，请耐心等待。</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                
+                    <!-- 商品网格展示 -->
+                    <div class="row row-cols-1 row-cols-md-3 g-4">
                         {% for item in selected_store.items_list %}
-                        <tr>
-                            <td>
-                                <img src="{{ item.image_url|default('/static/img/no-image.png') }}" 
-                                     alt="{{ item.title|truncate(30) }}" 
-                                     class="item-thumbnail" 
-                                     onerror="this.src='/static/img/no-image.png'">
-                            </td>
-                            <td>
-                                <a href="{{ item.url }}" target="_blank" title="{{ item.title }}">
-                                    {{ item.title|truncate(40) }}
-                                </a>
-                            </td>
-                            <td class="price-col">
-                                <span class="hover-info">${{ item.price }}</span>
-                            </td>
-                            <td>
-                                <span class="hover-info">{{ item.status|default('未知') }}</span>
-                            </td>
-                            <td>
-                                <span class="hover-info">{{ item.buy_format|default('未知') }}</span>
-                            </td>
-                            <td>
-                                <span class="hover-info">{{ item.shipping|default('未知') }}</span>
-                            </td>
-                            <td>
-                                <a href="{{ item.url }}" class="btn btn-sm btn-primary" target="_blank">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </td>
-                        </tr>
+                        <div class="col">
+                            <div class="card h-100 product-card">
+                                <div class="position-relative">
+                                    {% if item.is_new_listing %}
+                                    <span class="position-absolute top-0 start-0 badge bg-danger m-2">新上架</span>
+                                    {% endif %}
+                                    {% if item.discount_percent %}
+                                    <span class="position-absolute top-0 end-0 badge bg-success m-2">{{ item.discount_percent }}% OFF</span>
+                                    {% endif %}
+                                    <img src="{{ item.image_url }}" class="card-img-top" alt="{{ item.title }}"
+                                         onerror="this.src='/static/img/no-image.png'" style="height: 200px; object-fit: contain;">
+                                </div>
+                                <div class="card-body">
+                                    <h5 class="card-title" style="height: 50px; overflow: hidden;">{{ item.title | truncate(60) }}</h5>
+                                    <div class="d-flex justify-content-between align-items-center mt-2">
+                                        <div>
+                                            <h5 class="mb-0 text-primary">${{ item.price }}</h5>
+                                            {% if item.original_price %}
+                                            <small class="text-muted text-decoration-line-through">${{ item.original_price }}</small>
+                                            {% endif %}
+                                        </div>
+                                        <span class="badge bg-light text-dark">{{ item.status }}</span>
+                                    </div>
+                                    <p class="card-text mt-2">
+                                        <small class="text-muted">{{ item.shipping }}</small>
+                                        {% if item.free_returns %}
+                                        <span class="badge bg-info ms-1">免费退货</span>
+                                        {% endif %}
+                                    </p>
+                                </div>
+                                <div class="card-footer d-grid">
+                                    <a href="{{ item.url }}" class="btn btn-sm btn-outline-primary" target="_blank">
+                                        <i class="fas fa-external-link-alt"></i> 查看详情
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
                         {% endfor %}
-                    </tbody>
-                </table>
+                    </div>
+                </div>
             </div>
-        </div>
-    {% endif %}
-    
-    <!-- 页脚 -->
-    <div class="footer mt-4 mb-3 text-center">
-        <p>© 2025 eBay店铺监控</p>
-        <p class="text-info">
-            {% if last_update_time %}
-                最后更新: {{ last_update_time|timestamp_to_date }}
             {% else %}
-                尚未更新
+            <div class="card">
+                <div class="card-body text-center p-5">
+                    <h3 class="mb-4">欢迎使用eBay店铺监控</h3>
+                    <p class="text-muted mb-4">请从左侧选择一个店铺，或添加新的店铺监控</p>
+                    <a href="{{ url_for('main.index') }}" class="btn btn-primary">
+                        <i class="fas fa-plus-circle"></i> 添加店铺监控
+                    </a>
+                </div>
+            </div>
             {% endif %}
-        </p>
-        <p class="text-muted small">系统版本: 1.0.2</p>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -162,141 +150,90 @@ var storeItems = JSON.parse('{{ selected_store.items_list|tojson|safe }}');
 
 <script>
 $(document).ready(function() {
-    // 删除监控按钮事件
-    $('.delete-store').click(function() {
-        var storeName = $(this).data('store-id');
-        if (confirm('确定要删除对店铺 "' + storeName + '" 的监控吗？此操作不可撤销。')) {
-            $.ajax({
-                url: '/remove_store',
-                method: 'POST',
-                data: {
-                    store_name: storeName
-                },
-                success: function(response) {
-                    if (response.success) {
-                        alert(response.message);
-                        // 删除成功后返回监控面板
-                        window.location.href = '/dashboard';
-                    } else {
-                        alert('删除失败: ' + response.message);
-                    }
-                },
-                error: function() {
-                    alert('服务器错误，请稍后再试');
-                }
-            });
-        }
-    });
-    
-    // 刷新数据按钮事件
-    $('#refreshDashboardBtn').click(function() {
-        var storeId = "{{ selected_store.name if selected_store else '' }}";
-        if (!storeId) {
-            alert('请先选择一个店铺');
-            return;
-        }
-        
+    // 刷新数据按钮点击事件
+    $('#refreshStoreBtn').click(function() {
         var btn = $(this);
-        btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> 刷新中...');
+        var originalText = btn.html();
         
+        // 显示正在加载
+        btn.html('<i class="fas fa-spinner fa-spin"></i> 正在刷新...').prop('disabled', true);
+        $('#refreshLoading').removeClass('d-none');
+        $('#statusMessage').addClass('d-none');
+        
+        // 发送刷新请求
         $.ajax({
-            url: '/refresh_store',
+            url: '/refresh_store_data',
             method: 'POST',
             data: {
-                store_name: storeId
+                store_name: '{{ selected_store.name if selected_store else "" }}'
             },
             success: function(response) {
                 if (response.success) {
-                    $('#statusMessage').removeClass('d-none alert-danger').addClass('alert-success').text(response.message);
+                    $('#statusMessage').removeClass('d-none alert-danger').addClass('alert alert-success')
+                        .html('<i class="fas fa-check-circle"></i> ' + response.message);
+                    $('#refreshLoading').addClass('d-none');
+                    
+                    // 2秒后刷新页面
                     setTimeout(function() {
-                        window.location.reload();
-                    }, 1500);
+                        location.reload();
+                    }, 2000);
                 } else {
-                    $('#statusMessage').removeClass('d-none alert-success').addClass('alert-danger').text(response.message);
-                    btn.prop('disabled', false).html('<i class="fas fa-sync-alt"></i> 刷新数据');
+                    $('#statusMessage').removeClass('d-none alert-success').addClass('alert alert-danger')
+                        .html('<i class="fas fa-exclamation-circle"></i> ' + response.message);
+                    $('#refreshLoading').addClass('d-none');
+                    btn.html(originalText);
+                    btn.prop('disabled', false);
                 }
             },
             error: function() {
-                $('#statusMessage').removeClass('d-none alert-success').addClass('alert-danger').text('服务器错误，请稍后再试');
-                btn.prop('disabled', false).html('<i class="fas fa-sync-alt"></i> 刷新数据');
+                $('#statusMessage').removeClass('d-none alert-success').addClass('alert alert-danger')
+                    .html('<i class="fas fa-exclamation-triangle"></i> 服务器错误，请稍后再试');
+                $('#refreshLoading').addClass('d-none');
+                btn.html(originalText);
+                btn.prop('disabled', false);
             }
         });
     });
     
-    // 价格分布图 - 只在有storeItems变量时执行
-    if (typeof storeItems !== 'undefined' && storeItems.length > 0) {
-        (function() {
-            // 从JSON中提取价格数据
-            var prices = storeItems.map(function(item) {
-                return parseFloat(item.price);
-            });
-            
-            // 计算价格范围
-            var minPrice = Math.min.apply(null, prices);
-            var maxPrice = Math.max.apply(null, prices);
-            var range = maxPrice - minPrice;
-            
-            // 计算区间数量和大小
-            var binCount = Math.min(10, Math.ceil(prices.length / 5));
-            if (binCount < 3) binCount = 3;
-            var binSize = range / binCount;
-            
-            // 创建区间和频率统计
-            var bins = Array(binCount).fill(0);
-            var labels = [];
-            
-            for (var i = 0; i < binCount; i++) {
-                var start = minPrice + i * binSize;
-                var end = minPrice + (i + 1) * binSize;
-                labels.push('$' + start.toFixed(2) + ' - $' + end.toFixed(2));
-            }
-            
-            // 将价格分配到对应区间
-            prices.forEach(function(price) {
-                var index = Math.min(binCount - 1, Math.floor((price - minPrice) / binSize));
-                bins[index]++;
-            });
-            
-            // 绘制图表
-            var ctx = document.getElementById('priceChart').getContext('2d');
-            var myChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '商品数量',
-                        data: bins,
-                        backgroundColor: 'rgba(45, 152, 218, 0.7)',
-                        borderColor: 'rgba(52, 152, 219, 1)',
-                        borderWidth: 1,
-                        borderRadius: 4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            ticks: {
-                                stepSize: 1,
-                                precision: 0
-                            }
-                        },
-                        x: {
-                            ticks: {
-                                font: {
-                                    size: 10
-                                },
-                                maxRotation: 45,
-                                minRotation: 45
-                            }
-                        }
-                    }
+    // 删除店铺按钮点击事件
+    $('#removeStoreBtn').click(function() {
+        if (!confirm('确定要删除此店铺监控吗？此操作不可恢复。')) {
+            return;
+        }
+        
+        var btn = $(this);
+        var storeName = btn.data('store');
+        
+        btn.html('<i class="fas fa-spinner fa-spin"></i>').prop('disabled', true);
+        
+        $.ajax({
+            url: '/remove_store',
+            method: 'POST',
+            data: {
+                store_name: storeName
+            },
+            success: function(response) {
+                if (response.success) {
+                    $('#statusMessage').removeClass('d-none alert-danger').addClass('alert alert-success')
+                        .html('<i class="fas fa-check-circle"></i> ' + response.message);
+                    
+                    // 2秒后重定向到首页
+                    setTimeout(function() {
+                        window.location.href = '/dashboard';
+                    }, 2000);
+                } else {
+                    $('#statusMessage').removeClass('d-none alert-success').addClass('alert alert-danger')
+                        .html('<i class="fas fa-exclamation-circle"></i> ' + response.message);
+                    btn.html('<i class="fas fa-trash-alt"></i> 删除监控').prop('disabled', false);
                 }
-            });
-        })();
-    }
+            },
+            error: function() {
+                $('#statusMessage').removeClass('d-none alert-success').addClass('alert alert-danger')
+                    .html('<i class="fas fa-exclamation-triangle"></i> 服务器错误，请稍后再试');
+                btn.html('<i class="fas fa-trash-alt"></i> 删除监控').prop('disabled', false);
+            }
+        });
+    });
 });
 </script>
 

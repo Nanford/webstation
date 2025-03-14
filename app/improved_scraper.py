@@ -596,6 +596,161 @@ class ImprovedEbayStoreScraper:
         chars = string.ascii_letters + string.digits
         return ''.join(random.choice(chars) for _ in range(length))
 
+    def parse_item_element(self, element):
+        """解析单个商品元素"""
+        try:
+            # 商品ID
+            item_id = self._extract_item_id(element)
+            if not item_id:
+                return None
+            
+            # 获取商品标题
+            title_element = element.select_one('.s-item__title')
+            title = title_element.get_text(strip=True) if title_element else "未知标题"
+            
+            # 检查是否为新上架商品
+            is_new_listing = False
+            new_listing_tag = element.select_one('.s-item__title .LIGHT_HIGHLIGHT')
+            if new_listing_tag and 'New Listing' in new_listing_tag.get_text(strip=True):
+                is_new_listing = True
+                # 从标题中移除"New Listing"文本，获取纯标题
+                title = title.replace('New Listing', '').strip()
+            
+            # 商品URL
+            link_element = element.select_one('.s-item__link')
+            url = link_element.get('href') if link_element else None
+            
+            # 商品图片
+            image_element = element.select_one('.s-item__image-wrapper img')
+            image_url = image_element.get('src') if image_element else None
+            
+            # 商品价格
+            price = self._extract_price(element)
+            
+            # 原价（如果有折扣）
+            original_price = None
+            additional_price = element.select_one('.s-item__additional-price')
+            if additional_price:
+                try:
+                    original_text = additional_price.select_one('.STRIKETHROUGH')
+                    if original_text:
+                        original_price_text = original_text.get_text(strip=True)
+                        original_price = float(re.sub(r'[^\d.]', '', original_price_text))
+                except:
+                    pass
+            
+            # 折扣百分比
+            discount_percent = None
+            discount_element = element.select_one('.s-item__discount')
+            if discount_element:
+                try:
+                    discount_text = discount_element.get_text(strip=True)
+                    discount_match = re.search(r'(\d+)%', discount_text)
+                    if discount_match:
+                        discount_percent = int(discount_match.group(1))
+                except:
+                    pass
+            
+            # 商品状态
+            status = "未知"
+            subtitle = element.select_one('.s-item__subtitle')
+            if subtitle:
+                status = subtitle.get_text(strip=True)
+            
+            # 运费信息
+            shipping = "未知"
+            shipping_element = element.select_one('.s-item__shipping')
+            if shipping_element:
+                shipping = shipping_element.get_text(strip=True)
+            
+            # 返回是否包含免费退货信息
+            free_returns = False
+            returns_element = element.select_one('.s-item__free-returns')
+            if returns_element and "Free returns" in returns_element.get_text(strip=True):
+                free_returns = True
+            
+            # 卖家信息
+            seller_info = None
+            seller_element = element.select_one('.s-item__seller-info-text')
+            if seller_element:
+                seller_info = seller_element.get_text(strip=True)
+            
+            # 购买选项
+            buy_format = "未知"
+            format_element = element.select_one('.s-item__dynamic')
+            if format_element:
+                buy_format = format_element.get_text(strip=True)
+            
+            return {
+                'id': item_id,
+                'title': title,
+                'url': url,
+                'price': price,
+                'original_price': original_price,
+                'discount_percent': discount_percent,
+                'image_url': image_url,
+                'status': status,
+                'shipping': shipping,
+                'free_returns': free_returns,
+                'seller_info': seller_info,
+                'buy_format': buy_format,
+                'is_new_listing': is_new_listing,
+                'timestamp': int(time.time())
+            }
+            
+        except Exception as e:
+            self.logger.error(f"解析商品元素时出错: {e}")
+            return None
+
+    def _extract_item_id(self, element):
+        """从商品元素中提取商品ID"""
+        try:
+            # 从商品URL中提取ID
+            link_element = element.select_one('.s-item__link')
+            if not link_element:
+                return None
+            
+            url = link_element.get('href')
+            if not url:
+                return None
+            
+            # eBay商品URL格式通常是 https://www.ebay.com/itm/123456789
+            item_id_match = re.search(r'/itm/(\d+)', url)
+            if item_id_match:
+                return item_id_match.group(1)
+            
+            # 某些URL格式可能不同，尝试其他模式
+            alternate_match = re.search(r'itm/([^?/]+)', url)
+            if alternate_match:
+                return alternate_match.group(1)
+            
+            return None
+        except Exception as e:
+            self.logger.error(f"提取商品ID时出错: {e}")
+            return None
+    
+    def _extract_price(self, element):
+        """从商品元素中提取价格"""
+        try:
+            price_element = element.select_one('.s-item__price')
+            if not price_element:
+                return 0
+            
+            price_text = price_element.get_text(strip=True)
+            
+            # 移除货币符号、逗号等非数字字符
+            price_value = re.sub(r'[^\d.]', '', price_text)
+            
+            # 尝试转换为浮点数
+            try:
+                return float(price_value)
+            except ValueError:
+                self.logger.warning(f"无法解析价格: {price_text}")
+                return 0
+        except Exception as e:
+            self.logger.error(f"提取价格时出错: {e}")
+            return 0
+
 # 测试代码
 if __name__ == "__main__":
     test_url = "https://www.ebay.com/sch/i.html?_dkr=1&iconV2Request=true&_blrs=recall_filtering&_ssn=yingniao02&store_name=yingniao02&_oac=1"

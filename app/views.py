@@ -36,6 +36,17 @@ def add_store():
             'message': '请提供有效的邮箱地址'
         })
     
+    # 如果提供了邮箱，将其保存为系统默认邮箱
+    if notify_email:
+        current_app.redis_client.set('system:notify_email', notify_email)
+        current_app.logger.info(f"已设置系统通知邮箱: {notify_email}")
+    else:
+        # 尝试从Redis获取系统默认邮箱
+        default_email = current_app.redis_client.get('system:notify_email')
+        if default_email:
+            notify_email = default_email.decode('utf-8') if isinstance(default_email, bytes) else default_email
+            current_app.logger.info(f"使用系统默认通知邮箱: {notify_email}")
+    
     # 提取店铺名称
     store_name = ''
     if 'store_name=' in store_url:
@@ -329,45 +340,91 @@ def default_if_none(value, default_value="未知"):
     """如果值为None则返回默认值"""
     return value if value is not None else default_value 
 
-@main.route('/refresh_store', methods=['POST'])
-def refresh_store():
-    """刷新店铺数据"""
+@main.route('/refresh_store_data', methods=['POST'])
+def refresh_store_data():
+    """立即刷新店铺数据"""
     store_name = request.form.get('store_name')
-    
-    # 获取店铺信息
-    store_key = f"monitor:store:{store_name}"
-    store_data_json = current_app.redis_client.get(store_key)
-    
-    if not store_data_json:
+    if not store_name:
         return jsonify({
             'success': False,
-            'message': '未找到店铺信息'
+            'message': '参数错误：未提供店铺名称'
         })
     
     try:
+        # 获取Redis客户端
+        redis_client = current_app.redis_client
+        
+        # 获取店铺URL
+        store_key = f"monitor:store:{store_name}"
+        store_data_json = redis_client.get(store_key)
+        
+        if not store_data_json:
+            return jsonify({
+                'success': False,
+                'message': f'未找到店铺: {store_name}'
+            })
+        
         store_data = json.loads(store_data_json)
         store_url = store_data.get('url')
         
-        # 记录开始时间
-        start_time = time.time()
+        if not store_url:
+            return jsonify({
+                'success': False,
+                'message': '店铺URL不正确'
+            })
+            
+        current_app.logger.info(f"开始刷新店铺数据: {store_name}")
+        current_app.logger.info(f"此操作可能需要10-30秒，请耐心等待...")
         
-        # 使用爬虫更新店铺数据
-        scraper = EbayStoreScraper(current_app.redis_client)
+        # 使用爬虫更新数据
+        scraper = EbayStoreScraper(redis_client=redis_client)
         changes = scraper.update_store_data(store_url, store_name)
         
-        # 计算耗时
-        elapsed_time = time.time() - start_time
+        # 通知功能 - 获取通知邮箱
+        notify_email = store_data.get('notify_email')
+        if not notify_email:
+            # 尝试获取系统默认邮箱
+            default_email = redis_client.get('system:notify_email')
+            if default_email:
+                notify_email = default_email.decode('utf-8') if isinstance(default_email, bytes) else default_email
         
-        # 返回结果
+        # 如果有邮箱和变更，发送通知
+        if notify_email and (changes['new_listings'] or changes['price_changes']):
+            try:
+                notifier = EmailNotifier()
+                
+                if changes['new_listings']:
+                    current_app.logger.info(f"发送新商品通知到: {notify_email}")
+                    notifier.notify_new_listings(notify_email, store_name, changes['new_listings'])
+                    
+                if changes['price_changes']:
+                    current_app.logger.info(f"发送价格变动通知到: {notify_email}")
+                    notifier.notify_price_changes(notify_email, store_name, changes['price_changes'])
+            except Exception as e:
+                current_app.logger.error(f"发送通知邮件失败: {e}")
+        
+        # 构建消息
+        message = f"已刷新店铺 {store_name} 的数据。"
+        if changes['new_listings']:
+            message += f" {len(changes['new_listings'])} 个新商品。"
+        if changes['price_changes']:
+            message += f" {len(changes['price_changes'])} 个价格变动。"
+        if changes['removed_listings']:
+            message += f" {len(changes['removed_listings'])} 个下架商品。"
+            
+        if not any([changes['new_listings'], changes['price_changes'], changes['removed_listings']]):
+            message += " 没有检测到变化。"
+        
+        current_app.logger.info(message)
         return jsonify({
             'success': True,
-            'message': f'店铺数据已更新，耗时 {elapsed_time:.1f} 秒。发现 {len(changes["new_listings"])} 个新商品，{len(changes["price_changes"])} 个价格变动'
+            'message': message
         })
     except Exception as e:
-        current_app.logger.error(f"更新店铺数据出错: {e}")
+        current_app.logger.error(f"刷新店铺数据时出错: {e}")
         return jsonify({
             'success': False,
-            'message': f'更新店铺数据失败: {str(e)}'
+            'message': f'刷新店铺数据失败: {str(e)}'
         })
 
 # 添加删除店铺监控API
