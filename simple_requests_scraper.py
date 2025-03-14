@@ -304,6 +304,6 @@ def scrape_ebay_seller(seller_id,store_name, max_pages=5):
         return None
 
 if __name__ == "__main__":
-    seller_id = "fengou_006"  # 替换为目标卖家ID
-    store_name= "fengou006"
-    results_df = scrape_ebay_seller(seller_id,store_name,max_pages=2) 
+    seller_id = "starbellone"  # 替换为目标卖家ID
+    store_name= "starbellone"
+    results_df = scrape_ebay_seller(seller_id,store_name,max_pages=3) 

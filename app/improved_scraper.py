@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 from app.config import Config
 import logging.handlers
+from urllib.parse import urljoin
 
 # 配置日志
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -41,8 +42,13 @@ class ImprovedEbayStoreScraper:
     
     def __init__(self, redis_client=None, use_proxy=False):
         """初始化爬虫"""
-        # 将模块级别的logger添加为实例属性
         self.logger = logger
+        
+        # 从配置中加载设置
+        self.config = Config
+        
+        # 设置用户代理
+        self.user_agent = self.config.USER_AGENT
         
         # 默认headers
         self.headers = {
@@ -127,6 +133,20 @@ class ImprovedEbayStoreScraper:
         """获取随机User-Agent"""
         return random.choice(self.user_agents)
     
+    def get_random_headers(self):
+        """获取随机的请求头，避免被反爬"""
+        random_user_agent = self._get_random_user_agent()
+        headers = {
+            'User-Agent': random_user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Referer': 'https://www.ebay.com/',
+            'Cache-Control': 'max-age=0'
+        }
+        return headers
+    
     def get_store_items(self, store_url, max_retries=3):
         """获取店铺所有商品"""
         items = []
@@ -167,13 +187,21 @@ class ImprovedEbayStoreScraper:
                 }
                 
                 # 标准请求 - 使用随机化的User-Agent
-                headers['User-Agent'] = random.choice(self.user_agents)
+                headers = {
+                    'User-Agent': self._get_random_user_agent(),
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Cache-Control': 'max-age=0'
+                }
+                
                 self.logger.info("使用标准请求方法")
                 response = requests.get(
                     store_url,
                     headers=headers,
                     cookies=cookies,
-                    timeout=30
+                    timeout=40
                 )
                 
                 # 如果这次失败，下次尝试不同方法
@@ -187,7 +215,7 @@ class ImprovedEbayStoreScraper:
                     if items:
                         self.stats['successful_requests'] += 1
                         self.stats['items_scraped'] += len(items)
-                        self.stats['last_success_time'] = time.time()
+                        self.stats['last_success_time'] = time.sleep(time.time())
                         return items
                     else:
                         self.logger.warning(f"解析页面未找到商品数据，尝试第 {attempt+1}/{max_retries} 次")
@@ -222,16 +250,17 @@ class ImprovedEbayStoreScraper:
             
             # 随机等待5-10秒，模拟人类行为但不太长
             wait_time = random.uniform(5, 10)
+            self.logger.info(f"等待 {wait_time:.2f} 秒后使用curl发起请求...")
             time.sleep(wait_time)
             
             # 使用curl命令
             cmd = [
-                'curl',
+                '/usr/bin/curl',  # 使用绝对路径
                 '-s',  # 静默模式
                 '-L',  # 跟随重定向
-                '-A', random.choice(self.user_agents),  # 随机User-Agent
-                '--max-time', '30',  # 最大超时时间
-                '--connect-timeout', '30',  # 连接超时
+                '-A', self._get_random_user_agent(),  # 随机User-Agent
+                '--max-time', '40',  # 最大超时时间
+                '--connect-timeout', '40',  # 连接超时
                 '-H', 'Accept-Language: en-US,en;q=0.9', 
                 '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 '-H', 'dnt: 1',
@@ -340,18 +369,9 @@ class ImprovedEbayStoreScraper:
                     item_data['id'] = item_id
             
             # 商品价格
-            price_element = container.select_one('.s-item__price')
-            if price_element:
-                price_text = price_element.get_text(strip=True)
-                # 清理价格文本，移除货币符号和逗号
-                price_text = price_text.replace('$', '').replace(',', '')
-                # 如果价格范围格式为"$10.00 to $20.00"，取第一个价格
-                if ' to ' in price_text:
-                    price_text = price_text.split(' to ')[0]
-                try:
-                    item_data['price'] = float(price_text)
-                except ValueError:
-                    item_data['price'] = 0.0
+            price_data = self._extract_price(container)
+            item_data['price'] = price_data['value']
+            item_data['currency'] = price_data['currency']
             
             # 商品图片
             img_element = container.select_one('.s-item__image img')
@@ -445,11 +465,12 @@ class ImprovedEbayStoreScraper:
         self.logger.info(f"休眠 {cooldown:.2f} 秒，避免请求过于频繁...")
         time.sleep(cooldown)
         
-        # 获取店铺商品
-        items = self.get_store_items(store_url)
+        # 获取店铺商品 - 使用scrape_all_pages获取所有分页商品
+        self.logger.info(f"开始使用多页爬取获取店铺 {store_name} 的所有商品...")
+        items = self.scrape_all_pages(store_url, max_pages=10)  # 设置最大爬取10页，可根据需要调整
         
         if not items:
-            logger.error(f"无法获取店铺 {store_name} 的商品数据")
+            self.logger.error(f"无法获取店铺 {store_name} 的商品数据")
             
             # 从备份恢复
             backup_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backups')
@@ -457,14 +478,16 @@ class ImprovedEbayStoreScraper:
             backup_file = os.path.join(backup_dir, f"backup_{store_name}_items.json")
             
             if os.path.exists(backup_file):
-                logger.info(f"从备份文件 {backup_file} 恢复")
+                self.logger.info(f"从备份文件 {backup_file} 恢复")
                 with open(backup_file, 'r', encoding='utf-8') as f:
                     items = json.load(f)
             else:
                 return {'new_listings': [], 'price_changes': [], 'removed_listings': []}
         
+        self.logger.info(f"成功获取店铺 {store_name} 的商品数据，共 {len(items)} 个商品")
+        
         # 将商品列表转换为以ID为键的字典
-        current_items_dict = {item['id']: item for item in items}
+        current_items_dict = {item['id']: item for item in items if 'id' in item}
         
         # 获取以前的商品列表
         previous_items_json = self.redis.get(f"store:{store_name}:items")
@@ -475,35 +498,43 @@ class ImprovedEbayStoreScraper:
         
         # 检查是否存在旧数据
         if previous_items_json:
-            previous_items = json.loads(previous_items_json)
-            previous_items_dict = {item['id']: item for item in previous_items}
-            
-            # 检查新上架和价格变动的商品
-            for item_id, current_item in current_items_dict.items():
-                if item_id not in previous_items_dict:
-                    # 新上架商品
-                    new_listings.append(current_item)
-                else:
-                    # 检查价格是否变动
-                    previous_item = previous_items_dict[item_id]
-                    if current_item['price'] != previous_item['price']:
-                        # 价格变动
-                        change = {
-                            'id': item_id,
-                            'title': current_item['title'],
-                            'url': current_item['url'],
-                            'image_url': current_item['image_url'],
-                            'old_price': previous_item['price'],
-                            'new_price': current_item['price'],
-                            'timestamp': int(time.time())
-                        }
-                        price_changes.append(change)
-            
-            # 检查下架商品
-            for item_id, previous_item in previous_items_dict.items():
-                if item_id not in current_items_dict:
-                    # 商品下架
-                    removed_listings.append(previous_item)
+            try:
+                previous_items = json.loads(previous_items_json)
+                previous_items_dict = {item['id']: item for item in previous_items if 'id' in item}
+                
+                # 检查新上架和价格变动的商品
+                for item_id, current_item in current_items_dict.items():
+                    if item_id not in previous_items_dict:
+                        # 新上架商品
+                        new_listings.append(current_item)
+                    else:
+                        # 检查价格是否变动
+                        previous_item = previous_items_dict[item_id]
+                        current_price_text = current_item.get('price_text', str(current_item.get('price', 0)))
+                        previous_price_text = previous_item.get('price_text', str(previous_item.get('price', 0)))
+                        
+                        if current_price_text != previous_price_text:
+                            # 价格变动
+                            change = {
+                                'id': item_id,
+                                'title': current_item['title'],
+                                'url': current_item['url'],
+                                'image_url': current_item.get('image_url', ''),
+                                'old_price_text': previous_price_text,
+                                'new_price_text': current_price_text,
+                                'timestamp': int(time.time())
+                            }
+                            price_changes.append(change)
+                
+                # 检查下架商品
+                for item_id, previous_item in previous_items_dict.items():
+                    if item_id not in current_items_dict:
+                        # 商品下架
+                        removed_listings.append(previous_item)
+            except Exception as e:
+                self.logger.error(f"处理商品变化时出错: {e}")
+                # 所有商品视为新上架
+                new_listings = items
         else:
             # 没有旧数据，所有商品都是新上架
             new_listings = items
@@ -533,11 +564,11 @@ class ImprovedEbayStoreScraper:
         
         # 记录变更
         if new_listings:
-            logger.info(f"发现 {len(new_listings)} 个新上架商品")
+            self.logger.info(f"发现 {len(new_listings)} 个新上架商品")
         if price_changes:
-            logger.info(f"发现 {len(price_changes)} 个价格变动")
+            self.logger.info(f"发现 {len(price_changes)} 个价格变动")
         if removed_listings:
-            logger.info(f"发现 {len(removed_listings)} 个下架商品")
+            self.logger.info(f"发现 {len(removed_listings)} 个下架商品")
         
         return {
             'new_listings': new_listings,
@@ -590,7 +621,7 @@ class ImprovedEbayStoreScraper:
         cf_clearance = ''.join(random.choices('0123456789abcdef', k=32))
         self.headers['Cookie'] = f"cf_clearance={cf_clearance}; dp1=bu1p/QEBfX0BAX19AQA**{cf_clearance}^"
 
-    def _generate_random_id(self, length=32):
+    def _generate_random_id(self, length=16):
         """生成随机ID用于cookie"""
         import string
         chars = string.ascii_letters + string.digits
@@ -625,7 +656,7 @@ class ImprovedEbayStoreScraper:
             image_url = image_element.get('src') if image_element else None
             
             # 商品价格
-            price = self._extract_price(element)
+            price_data = self._extract_price(element)
             
             # 原价（如果有折扣）
             original_price = None
@@ -685,7 +716,9 @@ class ImprovedEbayStoreScraper:
                 'id': item_id,
                 'title': title,
                 'url': url,
-                'price': price,
+                'price': price_data['value'],
+                'currency': price_data['currency'],
+                'price_text': price_data['price_text'],
                 'original_price': original_price,
                 'discount_percent': discount_percent,
                 'image_url': image_url,
@@ -734,42 +767,223 @@ class ImprovedEbayStoreScraper:
         try:
             price_element = element.select_one('.s-item__price')
             if not price_element:
-                return 0
+                return {'value': 0, 'currency': '$', 'price_text': ''}
             
             price_text = price_element.get_text(strip=True)
+            # 保存原始价格文本
+            original_price_text = price_text
             
-            # 移除货币符号、逗号等非数字字符
-            price_value = re.sub(r'[^\d.]', '', price_text)
+            # 提取货币符号
+            currency = '$'  # 默认美元符号
+            if 'US $' in price_text:
+                currency = 'US $'
+            elif '£' in price_text:
+                currency = '£'
+            elif '€' in price_text:
+                currency = '€'
             
-            # 尝试转换为浮点数
-            try:
-                return float(price_value)
-            except ValueError:
-                self.logger.warning(f"无法解析价格: {price_text}")
-                return 0
+            # 保存价格文本，但仍然尝试提取数值用于排序和比较
+            value = 0
+            
+            # 如果是价格范围，尝试提取第一个价格作为数值参考
+            if 'to' in price_text.lower():
+                first_price_match = re.search(r'(\d+(?:\.\d+)?)', price_text)
+                if first_price_match:
+                    try:
+                        value = float(first_price_match.group(1))
+                    except ValueError:
+                        self.logger.warning(f"无法从价格范围提取数值: {price_text}")
+                # 不修改price_text，保留完整范围
+            else:
+                # 常规价格处理
+                # 处理含有单位的价格
+                clean_text = price_text
+                if '/ea' in clean_text:
+                    clean_text = clean_text.split('/ea')[0]
+                
+                # 处理其他可能的单位
+                for unit in ['/kg', '/lb', '/oz', '/pc', '/ct', '/set']:
+                    if unit in clean_text:
+                        clean_text = clean_text.split(unit)[0]
+                        break
+                    
+                # 处理带逗号的价格
+                clean_text = clean_text.replace(',', '')
+                
+                # 移除货币符号等非数字字符
+                price_value = re.sub(r'[^\d.]', '', clean_text.strip())
+                
+                try:
+                    if price_value:
+                        value = float(price_value)
+                except ValueError:
+                    self.logger.warning(f"无法解析价格: {clean_text}")
+            
+            # 返回包含原始文本和提取值的结果
+            return {
+                'value': value,  # 用于排序和过滤的数值
+                'currency': currency,
+                'price_text': original_price_text  # 保留完整的原始价格文本
+            }
         except Exception as e:
             self.logger.error(f"提取价格时出错: {e}")
-            return 0
+            return {'value': 0, 'currency': '$', 'price_text': ''}
 
-# 测试代码
-if __name__ == "__main__":
-    test_url = "https://www.ebay.com/sch/i.html?_dkr=1&iconV2Request=true&_blrs=recall_filtering&_ssn=yingniao02&store_name=yingniao02&_oac=1"
-    scraper = ImprovedEbayStoreScraper()
-    items = scraper.get_store_items(test_url)
-    
-    if items:
-        print(f"成功获取 {len(items)} 个商品")
-        for i, item in enumerate(items[:3]):
-            print(f"商品 {i+1}:")
-            print(f"  - ID: {item.get('id', 'N/A')}")
-            print(f"  - 标题: {item.get('title', 'N/A')}")
-            print(f"  - 价格: ${item.get('price', 0):.2f}")
-            print(f"  - 图片: {item.get('image_url', 'N/A')}")
-            print(f"  - 销量: {item.get('sold_count', 0)}")
-            print(f"  - 状态: {item.get('status', 'N/A')}")
-            print(f"  - 类别: {item.get('category', 'N/A')}")
-            print(f"  - 运费: {item.get('shipping', 'N/A')}")
-            print(f"  - 描述: {item.get('description', 'N/A')}")
-            print("---")
-    else:
-        print("获取商品失败") 
+    def scrape_all_pages(self, store_url, max_pages=None):
+        """
+        抓取多页数据，更全面地获取店铺商品
+        
+        Args:
+            store_url: eBay店铺URL
+            max_pages: 最大爬取页数，None表示不限制
+                
+        Returns:
+            包含所有分页商品的列表
+        """
+        all_items = []
+        current_url = store_url
+        current_page = 1
+        processed_urls = set()  # 跟踪已处理的URL，避免陷入循环
+        
+        self.logger.info(f"开始多页爬取，起始URL: {store_url}")
+        
+        while True:
+            # 检查是否达到最大页数限制
+            if max_pages and current_page > max_pages:
+                self.logger.info(f"已达到最大页数限制({max_pages}页)，停止爬取")
+                break
+                
+            # 防止URL重复处理
+            if current_url in processed_urls:
+                self.logger.warning(f"检测到URL重复，爬取结束: {current_url}")
+                break
+                
+            processed_urls.add(current_url)
+            
+            # 添加随机延迟，避免被反爬
+            if current_page > 1:  # 第一页不延迟，因为会在get_store_items中延迟
+                delay = random.uniform(8.0, 15.0)  # 增加延迟时间，避免触发反爬
+                self.logger.info(f"等待 {delay:.2f} 秒后请求第 {current_page} 页...")
+                time.sleep(delay)
+            
+            # 获取当前页商品
+            self.logger.info(f"正在爬取第 {current_page} 页: {current_url}")
+            
+            # 使用既有方法获取单页数据
+            current_page_items = self.get_store_items(current_url)
+            
+            if not current_page_items:
+                self.logger.warning(f"第 {current_page} 页没有获取到商品数据，爬取结束")
+                break
+                
+            self.logger.info(f"第 {current_page} 页获取到 {len(current_page_items)} 个商品")
+            all_items.extend(current_page_items)
+            
+            # 获取下一页URL
+            next_page_url = self._get_next_page_url_from_simple(current_url)
+            
+            if not next_page_url:
+                self.logger.info(f"没有找到下一页，爬取结束")
+                break
+                
+            current_url = next_page_url
+            current_page += 1
+        
+        self.logger.info(f"多页爬取完成，共爬取 {current_page} 页，获取 {len(all_items)} 个商品")
+        
+        # 去重
+        unique_items = {}
+        for item in all_items:
+            if 'id' in item and item['id']:
+                unique_items[item['id']] = item
+                
+        return list(unique_items.values())
+
+    def _get_next_page_url_from_simple(self, current_url):
+        """从simple_requests_scraper中提取的获取下一页URL的逻辑"""
+        try:
+            # 使用随机请求头
+            headers = self.get_random_headers()
+            
+            # 添加随机延迟
+            delay = random.uniform(2.0, 4.0)
+            self.logger.info(f"等待 {delay:.2f} 秒后获取下一页URL...")
+            time.sleep(delay)
+            
+            # 发送请求
+            response = requests.get(current_url, headers=headers, timeout=30)
+            if response.status_code != 200:
+                self.logger.warning(f"请求失败，状态码: {response.status_code}")
+                return None
+            
+            # 解析HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 保存当前页面以便调试
+            try:
+                debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
+                os.makedirs(debug_dir, exist_ok=True)
+                debug_file = os.path.join(debug_dir, f'page_{int(time.time())}.html')
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+            except Exception as e:
+                self.logger.warning(f"保存调试页面失败: {e}")
+            
+            # 方法1: 寻找下一页链接 - 这是eBay最新结构的最可靠方法
+            next_link = soup.select_one('a.pagination__next')
+            if next_link and 'href' in next_link.attrs:
+                next_url = next_link['href']
+                self.logger.info(f"方法1: 找到下一页链接: {next_url}")
+                return next_url
+            
+            # 方法2: 从分页列表中找到当前页码，然后找下一页
+            pagination = soup.select('ol.pagination__items li a')
+            current_page = None
+            
+            for link in pagination:
+                if link.get('aria-current') == 'page':
+                    try:
+                        current_page = int(link.text.strip())
+                        self.logger.info(f"找到当前页码: {current_page}")
+                        break
+                    except (ValueError, TypeError):
+                        pass
+                        
+            if current_page:
+                next_page = current_page + 1
+                
+                # 寻找下一页链接
+                for link in pagination:
+                    try:
+                        page_num = int(link.text.strip())
+                        if page_num == next_page:
+                            next_url = link['href']
+                            self.logger.info(f"方法2: 找到下一页链接: {next_url}")
+                            return next_url
+                    except (ValueError, TypeError, KeyError):
+                        continue
+                        
+                # 如果找不到下一页链接，尝试构造URL
+                if '_pgn=' in current_url:
+                    next_url = re.sub(r'_pgn=\d+', f'_pgn={next_page}', current_url)
+                    self.logger.info(f"方法3: 构造下一页URL: {next_url}")
+                    return next_url
+                else:
+                    separator = '&' if '?' in current_url else '?'
+                    next_url = f"{current_url}{separator}_pgn={next_page}"
+                    self.logger.info(f"方法3: 构造下一页URL: {next_url}")
+                    return next_url
+                    
+            # 方法4: URL中没有页码参数时，添加第2页
+            if '_pgn=' not in current_url:
+                separator = '&' if '?' in current_url else '?'
+                next_url = f"{current_url}{separator}_pgn=2"
+                self.logger.info(f"方法4: 添加页码参数构造第2页URL: {next_url}")
+                return next_url
+                
+            self.logger.warning("无法找到下一页链接")
+            return None
+                
+        except Exception as e:
+            self.logger.error(f"获取下一页URL时出错: {str(e)}")
+            return None

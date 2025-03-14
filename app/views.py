@@ -19,169 +19,182 @@ def index():
 # 添加店铺监控
 @main.route('/add_store', methods=['POST'])
 def add_store():
-    store_url = request.form.get('store_url')
-    notify_email = request.form.get('notify_email')
-    
-    # 验证URL格式是否为eBay店铺
-    if not store_url or not re.match(r'https?://(www\.)?ebay\.com/.*', store_url):
+    try:
+        store_url = request.form.get('store_url')
+        notify_email = request.form.get('notify_email')
+        
+        # 验证URL格式是否为eBay店铺
+        if not store_url or not re.match(r'https?://(www\.)?ebay\.com/.*', store_url):
+            return jsonify({
+                'success': False,
+                'message': '请提供有效的eBay店铺URL'
+            })
+        
+        # 验证邮箱格式
+        if notify_email and not re.match(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$', notify_email):
+            return jsonify({
+                'success': False,
+                'message': '请提供有效的邮箱地址'
+            })
+        
+        # 如果提供了邮箱，将其保存为系统默认邮箱
+        if notify_email:
+            current_app.redis_client.set('system:notify_email', notify_email)
+            current_app.logger.info(f"已设置系统通知邮箱: {notify_email}")
+        else:
+            # 尝试从Redis获取系统默认邮箱
+            default_email = current_app.redis_client.get('system:notify_email')
+            if default_email:
+                notify_email = default_email.decode('utf-8') if isinstance(default_email, bytes) else default_email
+                current_app.logger.info(f"使用系统默认通知邮箱: {notify_email}")
+        
+        # 提取店铺名称
+        store_name = ''
+        if 'store_name=' in store_url:
+            store_name = store_url.split('store_name=')[1].split('&')[0]
+        elif '_ssn=' in store_url:
+            store_name = store_url.split('_ssn=')[1].split('&')[0]
+        
+        if not store_name:
+            store_name = f"store_{int(time.time())}"
+        
+        current_app.logger.info(f"提取的店铺名称: {store_name}")
+        
+        # 创建店铺监控记录
+        store_data = {
+            'name': store_name,
+            'url': store_url,
+            'added_at': int(time.time()),
+            'notify_email': notify_email
+        }
+        
+        # 保存到Redis
+        current_app.redis_client.set(
+            f"monitor:store:{store_name}",
+            json.dumps(store_data)
+        )
+        
+        current_app.logger.info(f"开始创建爬虫并爬取数据: {store_name}")
+        
+        # 创建爬虫并立即爬取第一次数据
+        scraper = EbayStoreScraper(redis_client=current_app.redis_client)
+        scraper.update_store_data(store_url, store_name)
+        
+        return jsonify({
+            'success': True,
+            'message': f'已成功添加店铺 {store_name} 的监控',
+            'store_name': store_name
+        })
+    except Exception as e:
+        current_app.logger.error(f"添加店铺监控时出错: {str(e)}", exc_info=True)
         return jsonify({
             'success': False,
-            'message': '请提供有效的eBay店铺URL'
+            'message': f'添加店铺监控失败: {str(e)}'
         })
-    
-    # 验证邮箱格式
-    if notify_email and not re.match(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$', notify_email):
-        return jsonify({
-            'success': False,
-            'message': '请提供有效的邮箱地址'
-        })
-    
-    # 如果提供了邮箱，将其保存为系统默认邮箱
-    if notify_email:
-        current_app.redis_client.set('system:notify_email', notify_email)
-        current_app.logger.info(f"已设置系统通知邮箱: {notify_email}")
-    else:
-        # 尝试从Redis获取系统默认邮箱
-        default_email = current_app.redis_client.get('system:notify_email')
-        if default_email:
-            notify_email = default_email.decode('utf-8') if isinstance(default_email, bytes) else default_email
-            current_app.logger.info(f"使用系统默认通知邮箱: {notify_email}")
-    
-    # 提取店铺名称
-    store_name = ''
-    if 'store_name=' in store_url:
-        store_name = store_url.split('store_name=')[1].split('&')[0]
-    elif '_ssn=' in store_url:
-        store_name = store_url.split('_ssn=')[1].split('&')[0]
-    
-    if not store_name:
-        store_name = f"store_{int(time.time())}"
-    
-    # 创建店铺监控记录
-    store_data = {
-        'name': store_name,
-        'url': store_url,
-        'added_at': int(time.time()),
-        'notify_email': notify_email
-    }
-    
-    # 保存到Redis
-    current_app.redis_client.set(
-        f"monitor:store:{store_name}",
-        json.dumps(store_data)
-    )
-    
-    # 创建爬虫并立即爬取第一次数据
-    scraper = EbayStoreScraper(redis_client=current_app.redis_client)
-    scraper.update_store_data(store_url, store_name)
-    
-    return jsonify({
-        'success': True,
-        'message': f'已成功添加店铺 {store_name} 的监控',
-        'store_name': store_name
-    })
 
 # 店铺仪表板
 @main.route('/dashboard')
 def dashboard():
-    """显示监控仪表盘"""
-    # 获取店铺名参数
+    # 获取当前页码，默认为1
+    page = request.args.get('page', 1, type=int)
+    per_page = 20  # 每页显示20个商品
     store_name = request.args.get('store_name')
     
-    # 查找所有监控的店铺
+    # 如果指定了店铺名称，显示该店铺的商品
+    if store_name:
+        store_data_json = current_app.redis_client.get(f"monitor:store:{store_name}")
+        if not store_data_json:
+            # 如果店铺不存在，重定向到仪表盘首页
+            return redirect(url_for('main.dashboard'))
+        
+        # 获取该店铺的所有商品
+        items_json = current_app.redis_client.get(f"store:{store_name}:items")
+        if items_json:
+            items_data = json.loads(items_json)
+            
+            # 统计总商品数
+            total_items = len(items_data)
+            
+            # 计算总页数
+            pages = (total_items + per_page - 1) // per_page
+            
+            # 对数据分页
+            start = (page - 1) * per_page
+            end = min(start + per_page, total_items)
+            paginated_items = items_data[start:end]
+            
+            # 获取店铺信息
+            try:
+                store_data = json.loads(store_data_json)
+                store_data['items_list'] = paginated_items
+                store_data['item_count'] = total_items
+                
+                # 获取最后更新时间
+                last_update = current_app.redis_client.get(f"store:{store_name}:last_update")
+                if last_update:
+                    store_data['last_update'] = int(last_update)
+                
+                return render_template('dashboard.html', 
+                                      selected_store=store_data,
+                                      stores=get_all_stores(),
+                                      total=total_items,
+                                      page=page, 
+                                      per_page=per_page, 
+                                      pages=pages)
+            except:
+                pass
+    
+    # 如果没有指定店铺或获取数据失败，获取所有被监控的店铺
+    stores = get_all_stores()
+    
+    # 如果有店铺，显示第一个店铺的数据
+    if stores:
+        first_store = stores[0]
+        return redirect(url_for('main.dashboard', store_name=first_store['name']))
+        
+    # 如果没有店铺，显示空仪表盘
+    return render_template('dashboard.html', 
+                          stores=stores,
+                          selected_store=None,
+                          total=0, 
+                          page=1, 
+                          per_page=per_page, 
+                          pages=0)
+
+def get_all_stores():
+    """获取所有店铺信息"""
     stores = []
-    selected_store = None
     store_keys = current_app.redis_client.keys("monitor:store:*")
     
-    # 添加调试输出
-    current_app.logger.info(f"查找店铺，参数store_name={store_name}")
-    
     for key in store_keys:
-        try:
-            key_str = key.decode('utf-8') if isinstance(key, bytes) else key
-            store_data_json = current_app.redis_client.get(key_str)
-            
-            if not store_data_json:
-                continue
+        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+        store_data_json = current_app.redis_client.get(key_str)
+        if store_data_json:
+            try:
+                store_data = json.loads(store_data_json.decode('utf-8') if isinstance(store_data_json, bytes) else store_data_json)
                 
-            store_data = json.loads(store_data_json)
-            store_name_from_key = store_data.get('name')
-            
-            # 添加调试输出
-            current_app.logger.info(f"处理店铺: {store_name_from_key}")
-            
-            # 获取店铺商品数据
-            items_key = f"store:{store_name_from_key}:items"
-            items_json = current_app.redis_client.get(items_key)
-            
-            items = []
-            if items_json:
-                items = json.loads(items_json)
-            
-            # 获取最后更新时间
-            last_update_key = f"store:{store_name_from_key}:last_update"
-            last_update = current_app.redis_client.get(last_update_key)
-            
-            if last_update:
-                try:
-                    last_update = int(last_update)
-                except:
-                    last_update = None
-            else:
-                last_update = None
-            
-            store_info = {
-                'name': store_name_from_key,
-                'url': store_data.get('url'),
-                'items_count': len(items),
-                'items_list': items,
-                'last_update': last_update
-            }
-            
-            stores.append(store_info)
-            
-            # 如果是指定的店铺，设置为选中的店铺
-            if store_name and (store_name.lower() == store_name_from_key.lower() or 
-                              urllib.parse.unquote(store_name).lower() == store_name_from_key.lower()):
-                current_app.logger.info(f"找到匹配的店铺: {store_name} = {store_name_from_key}")
-                selected_store = {
-                    'name': store_name_from_key,
-                    'url': store_data.get('url'),
-                    'items_count': len(items),
-                    'items_list': items,
-                    'last_update': last_update
-                }
-            
-            current_app.logger.info(f"店铺 {store_name_from_key} 有 {len(items)} 个商品")
-            
-        except Exception as e:
-            current_app.logger.error(f"处理店铺数据时出错: {e}")
+                # 获取附加信息
+                store_name = store_data.get('name')
+                
+                # 商品数量
+                items_json = current_app.redis_client.get(f"store:{store_name}:items")
+                item_count = 0
+                if items_json:
+                    items = json.loads(items_json.decode('utf-8') if isinstance(items_json, bytes) else items_json)
+                    item_count = len(items)
+                
+                # 最后更新时间
+                last_updated = current_app.redis_client.get(f"store:{store_name}:last_update")
+                if last_updated:
+                    last_updated_val = int(last_updated.decode('utf-8') if isinstance(last_updated, bytes) else last_updated)
+                    store_data['last_update'] = last_updated_val
+                
+                store_data['item_count'] = item_count
+                stores.append(store_data)
+            except Exception as e:
+                current_app.logger.error(f"获取店铺信息出错: {str(e)}")
     
-    current_app.logger.info(f"找到 {len(stores)} 个监控店铺")
-    
-    # 如果没有选择特定店铺，但有店铺数据，则默认选择第一个店铺
-    if not selected_store and stores:
-        first_store = stores[0]
-        selected_store = {
-            'name': first_store['name'],
-            'url': first_store['url'],
-            'items_count': first_store['items_count'],
-            'items_list': first_store['items_list'],
-            'last_update': first_store['last_update']
-        }
-        current_app.logger.info(f"默认选择第一个店铺: {selected_store['name']}")
-    
-    # 设置一个默认的last_update_time
-    last_update_time = None
-    if selected_store and selected_store.get('last_update'):
-        last_update_time = selected_store['last_update']
-    elif stores and stores[0].get('last_update'):
-        last_update_time = stores[0]['last_update']
-    
-    return render_template('dashboard.html', 
-                          stores=stores, 
-                          selected_store=selected_store,
-                          last_update_time=last_update_time)
+    return stores
 
 # 获取店铺列表API
 @main.route('/api/stores')
