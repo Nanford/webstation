@@ -78,97 +78,92 @@ class EmailNotifier:
             return False
     
     def notify_new_listings(self, recipient, store_name, new_items):
-        """新商品通知"""
-        if not new_items:
+        """通知新上架商品"""
+        
+        # 过滤只发送真正的"New listing"商品
+        true_new_items = [item for item in new_items if item.get('is_new_listing')]
+        
+        # 如果没有真正的新上架商品，直接返回
+        if not true_new_items:
+            self.logger.info(f"没有真正标记为'New listing'的商品，不发送通知")
             return True
         
-        subject = f"eBay店铺 {store_name} - 发现{len(new_items)}个新商品"
-        
-        html = f"""
-        <html>
-        <head>
-            <style>
-                /* 邮件样式 */
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 0;
-                    background-color: #f4f4f4;
-                }}
-                .container {{
-                    width: 100%;
-                    max-width: 600px;
-                    margin: 0 auto;
-                    background-color: #ffffff;
-                    padding: 20px;
-                }}
-                .header {{
-                    text-align: center;
-                    padding: 10px;
-                    background-color: #3F51B5;
-                    color: white;
-                }}
-                .item {{
-                    margin: 20px 0;
-                    border-bottom: 1px solid #eee;
-                    padding-bottom: 20px;
-                }}
-                .item-image {{
-                    max-width: 200px;
-                    height: auto;
-                }}
-                .new-listing-badge {{
-                    display: inline-block;
-                    background-color: #ff5722;
-                    color: white;
-                    font-size: 12px;
-                    padding: 3px 8px;
-                    border-radius: 3px;
-                    margin-right: 5px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h2>eBay店铺 {store_name} - 新商品通知</h2>
-                </div>
-                
-                <p>亲爱的用户，</p>
-                <p>您监控的eBay店铺 <strong>{store_name}</strong> 有 <strong>{len(new_items)}</strong> 个新商品:</p>
-                
-                <div class="items">
-        """
-        
-        for item in new_items:
-            price = item.get('price', 0)
-            shipping = item.get('shipping', '未知')
-            status = item.get('status', '未知')
-            is_new_listing = item.get('is_new_listing', False)
+        try:
+            # 创建邮件
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = f'【eBay店铺监控】{store_name} 有新上架商品'
+            msg['From'] = self.default_sender
+            msg['To'] = recipient
             
-            html += f"""
+            # 邮件HTML内容
+            html = f"""
+            <html>
+            <head>
+                <style>
+                    .container {{ max-width: 800px; margin: 0 auto; font-family: Arial, sans-serif; }}
+                    .header {{ background-color: #00509d; color: white; padding: 15px; text-align: center; }}
+                    .item {{ border-bottom: 1px solid #eee; padding: 15px; margin-bottom: 15px; }}
+                    .item-image {{ max-width: 200px; max-height: 200px; }}
+                    .new-listing-badge {{ background-color: #ff4631; color: white; font-size: 12px; padding: 3px 8px; border-radius: 3px; margin-right: 10px; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h2>{store_name} 新上架商品通知</h2>
+                        <p>发现 {len(true_new_items)} 个新上架商品</p>
+                    </div>
+            """
+            
+            for item in true_new_items:
+                price = item.get('price', 0)
+                shipping = item.get('shipping', '未知')
+                status = item.get('status', '未知')
+                listing_date = item.get('listing_date', '未知')
+                
+                html += f"""
                     <div class="item">
                         <h3>
-                            {f'<span class="new-listing-badge">新上架</span>' if is_new_listing else ''}
+                            <span class="new-listing-badge">新上架</span>
                             <a href="{item.get('url', '#')}">{item.get('title', '未知标题')}</a>
                         </h3>
                         <div>
                             <img src="{item.get('image_url', '')}" class="item-image" alt="{item.get('title', '商品图片')}">
                         </div>
-                        <p>价格: <strong>${price:.2f}</strong></p>
+                        <p>价格: <strong>{item.get('currency', '$')}{price:.2f}</strong></p>
                         <p>运费: {shipping}</p>
                         <p>状态: {status}</p>
+                        <p>上架时间: {listing_date}</p>
                     </div>
-            """
-        
-        html += """
+                """
+            
+            html += """
                 </div>
-            </div>
-        </body>
-        </html>
-        """
+            </body>
+            </html>
+            """
+            
+            # 添加邮件内容
+            msg.attach(MIMEText(html, 'html'))
+            
+            # 发送邮件
+            if self.use_ssl:
+                server = smtplib.SMTP_SSL(self.server, self.port)
+            else:
+                server = smtplib.SMTP(self.server, self.port)
+                if self.use_tls:
+                    server.starttls()
+            
+            server.login(self.username, self.password)
+            server.sendmail(self.default_sender, recipient, msg.as_string())
+            server.quit()
+            
+            self.logger.info(f"成功发送新上架商品通知邮件到 {recipient}")
+            return True
         
-        return self.send_email(recipient, subject, html)
+        except Exception as e:
+            self.logger.error(f"发送新上架商品通知邮件失败: {str(e)}")
+            return False
     
     def notify_price_changes(self, recipient, store_name, price_changes):
         """通知价格变动"""

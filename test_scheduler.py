@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger('test_scheduler')
 
-def test_scrape_and_notify(store_url, email, store_name=None, max_pages=1):
+def test_scrape_and_notify(store_url, email, store_name=None, max_pages=3):
     """测试爬取并通知新商品"""
     
     if not store_name:
@@ -78,43 +78,69 @@ def test_scrape_and_notify(store_url, email, store_name=None, max_pages=1):
         redis_client.set(f"store:{store_name}:items", json.dumps(current_items))
         redis_client.set(f"store:{store_name}:last_update", int(time.time()))
         
-        # 如果没有之前的数据，则将所有商品视为新上架
-        if not previous_items:
-            new_listings = current_items
-            logger.info(f"没有找到之前的数据，将所有 {len(new_listings)} 个商品视为新上架")
-        else:
-            # 比较数据，找出新上架商品
-            previous_ids = {item.get('id'): item for item in previous_items}
-            new_listings = [item for item in current_items if item.get('id') not in previous_ids]
-            logger.info(f"对比数据后，发现 {len(new_listings)} 个新上架商品")
+        # 找出带有New Listing标记的商品
+        true_new_listings = []
+        for item in current_items:
+            # 根据is_new_listing字段判断（该字段在爬虫解析时设置）
+            if item.get('is_new_listing'):
+                true_new_listings.append(item)
+                logger.info(f"发现New Listing商品: {item.get('title')}")
+                
+        # 比较价格变动
+        price_changes = []
+        if previous_items:
+            previous_ids = {item.get('id'): item for item in previous_items if item.get('id')}
+            
+            for item in current_items:
+                item_id = item.get('id')
+                if not item_id:
+                    continue
+                    
+                if item_id in previous_ids:
+                    prev_item = previous_ids[item_id]
+                    # 比较价格是否有变化
+                    if prev_item.get('price') != item.get('price'):
+                        price_change = {
+                            'id': item_id,
+                            'title': item.get('title'),
+                            'url': item.get('url'),
+                            'old_price': prev_item.get('price'),
+                            'new_price': item.get('price'),
+                            'currency': item.get('currency', '$'),
+                            'image_url': item.get('image_url')
+                        }
+                        price_changes.append(price_change)
+                        logger.info(f"发现价格变动商品: {item.get('title')} - 从 {prev_item.get('price')} 变为 {item.get('price')}")
         
-        # 查找带"New Listing"标记的商品
-        true_new_listings = [item for item in current_items if item.get('is_new_listing')]
-        if true_new_listings:
-            logger.info(f"找到 {len(true_new_listings)} 个带'New Listing'标记的商品")
-            # 合并两种方式找到的新商品
-            for item in true_new_listings:
-                if item.get('id') and item.get('id') not in [i.get('id') for i in new_listings]:
-                    new_listings.append(item)
-        
-        # 没有新商品，结束测试
-        if not new_listings:
-            logger.info("没有发现新上架商品，不发送邮件通知")
+        # 如果没有New Listing商品且没有价格变动，结束测试
+        if not true_new_listings and not price_changes:
+            logger.info("没有发现New Listing商品或价格变动商品，不发送邮件通知")
             return True
         
         # 初始化邮件通知
         notifier = EmailNotifier()
         
-        # 发送新商品通知
-        logger.info(f"发送 {len(new_listings)} 个新上架商品的邮件通知到 {email}")
-        result = notifier.notify_new_listings(email, store_name, new_listings)
+        # 发送New Listing商品通知
+        if true_new_listings:
+            logger.info(f"发送 {len(true_new_listings)} 个New Listing商品的邮件通知到 {email}")
+            result = notifier.notify_new_listings(email, store_name, true_new_listings)
+            
+            if result:
+                logger.info("New Listing邮件发送成功！")
+            else:
+                logger.error("New Listing邮件发送失败！")
         
-        if result:
-            logger.info("邮件发送成功！")
-        else:
-            logger.error("邮件发送失败！")
+        # 发送价格变动通知
+        if price_changes:
+            logger.info(f"发送 {len(price_changes)} 个价格变动商品的邮件通知到 {email}")
+            result = notifier.notify_price_changes(email, store_name, price_changes)
+            
+            if result:
+                logger.info("价格变动邮件发送成功！")
+            else:
+                logger.error("价格变动邮件发送失败！")
         
-        return result
+        return True
         
     except Exception as e:
         logger.error(f"测试过程中发生错误: {str(e)}", exc_info=True)
@@ -127,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument('--url', required=True, help='eBay店铺URL')
     parser.add_argument('--email', required=True, help='通知邮箱')
     parser.add_argument('--name', help='店铺名称（可选）')
-    parser.add_argument('--pages', type=int, default=1, help='爬取页数（默认1页）')
+    parser.add_argument('--pages', type=int, default=3, help='爬取页数（默认3页）')
     
     args = parser.parse_args()
     

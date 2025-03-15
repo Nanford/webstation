@@ -60,8 +60,8 @@ def init_scheduler(app):
                 
                 # 如果有设置通知邮箱并且有变动，发送邮件通知
                 if notify_email:
-                    # 通知新上架商品
-                    if changes['new_listings']:
+                    # 仅当检测到真正的"new listing"商品时发送新上架通知
+                    if any(item.get('is_new_listing') for item in changes['new_listings']):
                         notifier.notify_new_listings(
                             notify_email, 
                             store_name, 

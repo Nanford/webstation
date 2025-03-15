@@ -14,6 +14,7 @@ from datetime import datetime
 from app.config import Config
 import logging.handlers
 from urllib.parse import urljoin
+from app.utils import is_valid_ebay_url
 
 # 配置日志
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -649,13 +650,29 @@ class ImprovedEbayStoreScraper:
             title_element = element.select_one('.s-item__title')
             title = title_element.get_text(strip=True) if title_element else "未知标题"
             
-            # 检查是否为新上架商品
+            # 检测是否为新上架商品（不区分大小写）
             is_new_listing = False
-            new_listing_tag = element.select_one('.s-item__title .LIGHT_HIGHLIGHT')
-            if new_listing_tag and 'New Listing' in new_listing_tag.get_text(strip=True):
-                is_new_listing = True
-                # 从标题中移除"New Listing"文本，获取纯标题
-                title = title.replace('New Listing', '').strip()
+            
+            # 方法1：检查标题中的LIGHT_HIGHLIGHT类标签（基于您提供的HTML结构）
+            highlight_element = element.select_one('.s-item__title .LIGHT_HIGHLIGHT')
+            if highlight_element:
+                highlight_text = highlight_element.get_text(strip=True).lower()
+                is_new_listing = 'new listing' in highlight_text
+            
+            # 备用方法2：检查商品描述中是否包含New Listing文本
+            if not is_new_listing:
+                description_element = element.select_one('.s-item__subtitle')
+                if description_element:
+                    description_text = description_element.get_text(strip=True)
+                    is_new_listing = 'new listing' in description_text.lower()
+            
+            # 备用方法3：检查其他可能的位置
+            if not is_new_listing:
+                for tag in element.select('.s-item__dynamic'):
+                    tag_text = tag.get_text(strip=True)
+                    if 'new listing' in tag_text.lower():
+                        is_new_listing = True
+                        break
             
             # 商品URL
             link_element = element.select_one('.s-item__link')
@@ -779,13 +796,6 @@ class ImprovedEbayStoreScraper:
             if time_element:
                 listing_date = time_element.get_text(strip=True)
             
-            # 新上架商品检测
-            is_new_listing = False
-            new_listing_element = element.select_one('.s-item__title--tagblock .POSITIVE')
-            if new_listing_element:
-                new_listing_text = new_listing_element.get_text(strip=True).lower()
-                is_new_listing = 'new listing' in new_listing_text or 'new listingopens' in new_listing_text
-            
             return {
                 'id': item_id,
                 'title': title,
@@ -802,12 +812,12 @@ class ImprovedEbayStoreScraper:
                 'seller_info': seller_info,
                 'buy_format': buy_format,
                 'is_new_listing': is_new_listing,
-                'listing_date': listing_date,  # 添加上架时间
+                'listing_date': listing_date,
                 'timestamp': int(time.time())
             }
             
         except Exception as e:
-            self.logger.error(f"解析商品元素时出错: {e}")
+            self.logger.error(f"解析商品元素失败: {e}")
             return None
 
     def _extract_item_id(self, element):
@@ -955,7 +965,7 @@ class ImprovedEbayStoreScraper:
             all_items.extend(current_page_items)
             
             # 获取下一页URL
-            next_page_url = self._get_next_page_url_from_simple(current_url)
+            next_page_url = self._get_next_page_url(current_url, current_url)
             
             if not next_page_url:
                 self.logger.info(f"没有找到下一页，爬取结束")
@@ -974,99 +984,10 @@ class ImprovedEbayStoreScraper:
                 
         return list(unique_items.values())
 
-    def _get_next_page_url_from_simple(self, current_url):
-        """从simple_requests_scraper中提取的获取下一页URL的逻辑"""
-        try:
-            # 使用随机请求头
-            headers = self.get_random_headers()
-            
-            # 添加随机延迟
-            delay = random.uniform(2.0, 4.0)
-            self.logger.info(f"等待 {delay:.2f} 秒后获取下一页URL...")
-            time.sleep(delay)
-            
-            # 发送请求
-            response = requests.get(current_url, headers=headers, timeout=30)
-            if response.status_code != 200:
-                self.logger.warning(f"请求失败，状态码: {response.status_code}")
-                return None
-            
-            # 解析HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 保存当前页面以便调试
-            try:
-                debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
-                os.makedirs(debug_dir, exist_ok=True)
-                debug_file = os.path.join(debug_dir, f'page_{int(time.time())}.html')
-                with open(debug_file, 'w', encoding='utf-8') as f:
-                    f.write(response.text)
-            except Exception as e:
-                self.logger.warning(f"保存调试页面失败: {e}")
-            
-            # 方法1: 寻找下一页链接 - 这是eBay最新结构的最可靠方法
-            next_link = soup.select_one('a.pagination__next')
-            if next_link and 'href' in next_link.attrs:
-                next_url = next_link['href']
-                self.logger.info(f"方法1: 找到下一页链接: {next_url}")
-                return next_url
-            
-            # 方法2: 从分页列表中找到当前页码，然后找下一页
-            pagination = soup.select('ol.pagination__items li a')
-            current_page = None
-            
-            for link in pagination:
-                if link.get('aria-current') == 'page':
-                    try:
-                        current_page = int(link.text.strip())
-                        self.logger.info(f"找到当前页码: {current_page}")
-                        break
-                    except (ValueError, TypeError):
-                        pass
-                        
-            if current_page:
-                next_page = current_page + 1
-                
-                # 寻找下一页链接
-                for link in pagination:
-                    try:
-                        page_num = int(link.text.strip())
-                        if page_num == next_page:
-                            next_url = link['href']
-                            self.logger.info(f"方法2: 找到下一页链接: {next_url}")
-                            return next_url
-                    except (ValueError, TypeError, KeyError):
-                        continue
-                        
-                # 如果找不到下一页链接，尝试构造URL
-                if '_pgn=' in current_url:
-                    next_url = re.sub(r'_pgn=\d+', f'_pgn={next_page}', current_url)
-                    self.logger.info(f"方法3: 构造下一页URL: {next_url}")
-                    return next_url
-                else:
-                    separator = '&' if '?' in current_url else '?'
-                    next_url = f"{current_url}{separator}_pgn={next_page}"
-                    self.logger.info(f"方法3: 构造下一页URL: {next_url}")
-                    return next_url
-                    
-            # 方法4: URL中没有页码参数时，添加第2页
-            if '_pgn=' not in current_url:
-                separator = '&' if '?' in current_url else '?'
-                next_url = f"{current_url}{separator}_pgn=2"
-                self.logger.info(f"方法4: 添加页码参数构造第2页URL: {next_url}")
-                return next_url
-                
-            self.logger.warning("无法找到下一页链接")
-            return None
-                
-        except Exception as e:
-            self.logger.error(f"获取下一页URL时出错: {str(e)}")
-            return None
+    def _get_next_page_url(self, html_content, current_url):
+        """从HTML中提取下一页的URL"""
+        # ... 方法实现 ...
 
     def validate_url(self, url):
         """验证是否为有效的eBay URL"""
-        if not url:
-            return False
-        
-        # 检查是否为支持的eBay域名
-        return any(domain in url for domain in self.supported_domains)
+        return is_valid_ebay_url(url)

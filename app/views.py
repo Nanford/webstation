@@ -7,6 +7,7 @@ from app.improved_scraper import ImprovedEbayStoreScraper as EbayStoreScraper
 from app.notification import EmailNotifier
 import re
 import urllib.parse
+from app.utils import is_valid_ebay_url
 
 # 创建蓝图
 main = Blueprint('main', __name__)
@@ -23,8 +24,8 @@ def add_store():
         store_url = request.form.get('store_url')
         notify_email = request.form.get('notify_email')
         
-        # 验证URL格式是否为eBay店铺
-        if not store_url or not re.match(r'https?://(www\.)?ebay\.com/.*', store_url):
+        # 使用通用验证函数
+        if not is_valid_ebay_url(store_url):
             return jsonify({
                 'success': False,
                 'message': '请提供有效的eBay店铺URL'
@@ -506,6 +507,13 @@ def monitor_store():
     store_url = data['store_url']
     email = data['email']
     store_name = data.get('store_name', '')
+    
+    # 使用通用验证函数
+    if not is_valid_ebay_url(store_url):
+        return jsonify({
+            'success': False,
+            'message': '请提供有效的eBay店铺URL'
+        }), 400
     
     # 如果没有提供店铺名称，尝试从URL提取
     if not store_name:
