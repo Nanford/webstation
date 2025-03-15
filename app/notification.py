@@ -4,7 +4,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import logging
-from app.config import Config
+from app.config import Config  # 只导入Config类
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -239,4 +239,104 @@ class EmailNotifier:
         </html>
         """
         
-        return self.send_email(recipient, subject, html) 
+        return self.send_email(recipient, subject, html)
+
+def send_notification_email(recipient_email, changes, store_id):
+    """发送商品变动通知邮件"""
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f'【eBay店铺监控】店铺 {store_id} 有新变化'
+        msg['From'] = Config.MAIL_USERNAME
+        msg['To'] = recipient_email
+        
+        # 构建HTML邮件内容
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; }}
+                .container {{ max-width: 600px; margin: 0 auto; }}
+                .section {{ margin-bottom: 20px; }}
+                .item {{ margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+                .price-change {{ color: red; font-weight: bold; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>eBay店铺监控 - 变化通知</h2>
+                <p>您监控的店铺 {store_id} 有以下变化：</p>
+        """
+        
+        # 新上架商品
+        if changes['new_items']:
+            html_content += """
+                <div class="section">
+                    <h3>新上架商品</h3>
+            """
+            
+            for item in changes['new_items']:
+                html_content += f"""
+                    <div class="item">
+                        <p><strong>{item['title']}</strong></p>
+                        <p>价格: ${item['price']}</p>
+                        <p><a href="{item['url']}">查看商品</a></p>
+                    </div>
+                """
+            
+            html_content += "</div>"
+        
+        # 价格变化商品
+        if changes['price_changes']:
+            html_content += """
+                <div class="section">
+                    <h3>价格变化商品</h3>
+            """
+            
+            for change in changes['price_changes']:
+                item = change['item']
+                html_content += f"""
+                    <div class="item">
+                        <p><strong>{item['title']}</strong></p>
+                        <p>原价: ${change['old_price']} → 现价: <span class="price-change">${change['new_price']}</span></p>
+                        <p><a href="{item['url']}">查看商品</a></p>
+                    </div>
+                """
+            
+            html_content += "</div>"
+        
+        # 下架商品
+        if changes['removed_items']:
+            html_content += """
+                <div class="section">
+                    <h3>已下架商品</h3>
+            """
+            
+            for item in changes['removed_items']:
+                html_content += f"""
+                    <div class="item">
+                        <p><strong>{item['title']}</strong></p>
+                        <p>价格: ${item['price']}</p>
+                    </div>
+                """
+            
+            html_content += "</div>"
+        
+        html_content += """
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(html_content, 'html'))
+        
+        # 发送邮件
+        with smtplib.SMTP(Config.MAIL_SERVER, Config.MAIL_PORT) as server:
+            server.starttls()
+            server.login(Config.MAIL_USERNAME, Config.MAIL_PASSWORD)
+            server.send_message(msg)
+        
+        return True
+    
+    except Exception as e:
+        logger.error(f"发送邮件失败: {str(e)}")
+        return False 

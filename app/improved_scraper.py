@@ -107,6 +107,16 @@ class ImprovedEbayStoreScraper:
         self.proxy_list = []
         # 添加一个错误重试标记
         self.retry_with_different_method = False
+        
+        # 支持的eBay域名
+        self.supported_domains = [
+            'ebay.com',
+            'ebay.co.uk',
+            'ebay.de',
+            'ebay.fr',
+            'ebay.com.au',
+            'ebay.ca'
+        ]
     
     def _load_proxies(self):
         """加载代理列表"""
@@ -467,7 +477,7 @@ class ImprovedEbayStoreScraper:
         
         # 获取店铺商品 - 使用scrape_all_pages获取所有分页商品
         self.logger.info(f"开始使用多页爬取获取店铺 {store_name} 的所有商品...")
-        items = self.scrape_all_pages(store_url, max_pages=10)  # 设置最大爬取10页，可根据需要调整
+        items = self.scrape_all_pages(store_url, max_pages=3)  # 设置最大爬取10页，可根据需要调整
         
         if not items:
             self.logger.error(f"无法获取店铺 {store_name} 的商品数据")
@@ -656,7 +666,38 @@ class ImprovedEbayStoreScraper:
             image_url = image_element.get('src') if image_element else None
             
             # 商品价格
-            price_data = self._extract_price(element)
+            price_element = element.select_one('.s-item__price')
+            price_data = {'value': 0.0, 'currency': 'USD', 'price_text': ''}
+            
+            if price_element:
+                price_text = price_element.get_text(strip=True)
+                price_data['price_text'] = price_text
+                
+                # 识别货币符号
+                currency_map = {
+                    '$': 'USD',
+                    '£': 'GBP',
+                    '€': 'EUR',
+                    '¥': 'JPY',
+                    'C$': 'CAD',
+                    'A$': 'AUD'
+                }
+                
+                # 判断货币类型
+                for symbol, code in currency_map.items():
+                    if symbol in price_text:
+                        price_data['currency'] = code
+                        break
+                
+                # 提取数字
+                price_match = re.search(r'[\d,.]+', price_text)
+                if price_match:
+                    try:
+                        # 清理英国格式的价格 (£1,234.56)
+                        price_value = price_match.group(0).replace(',', '')
+                        price_data['value'] = float(price_value)
+                    except:
+                        self.logger.warning(f"无法解析价格: {price_text}")
             
             # 原价（如果有折扣）
             original_price = None
@@ -712,6 +753,39 @@ class ImprovedEbayStoreScraper:
             if format_element:
                 buy_format = format_element.get_text(strip=True)
             
+            # 获取上架时间 - 支持多种格式
+            listing_date = None
+            listing_date_element = element.select_one('.s-item__listingDate')
+            if listing_date_element:
+                listing_date_text = listing_date_element.get_text(strip=True)
+                # 移除前缀，支持多语言
+                if ":" in listing_date_text:
+                    listing_date = listing_date_text.split(":", 1)[1].strip()
+                else:
+                    listing_date = listing_date_text
+            
+            # 另一种可能的日期选择器
+            if not listing_date:
+                date_element = element.select_one('.s-item__dynamic.s-item__listingDate')
+                if date_element:
+                    date_text = date_element.get_text(strip=True)
+                    if ":" in date_text:
+                        listing_date = date_text.split(":", 1)[1].strip()
+                    else:
+                        listing_date = date_text
+            
+            # 新增：支持英国格式的日期 (14-Mar 11:46)
+            time_element = element.select_one('span.POSITIVE')
+            if time_element:
+                listing_date = time_element.get_text(strip=True)
+            
+            # 新上架商品检测
+            is_new_listing = False
+            new_listing_element = element.select_one('.s-item__title--tagblock .POSITIVE')
+            if new_listing_element:
+                new_listing_text = new_listing_element.get_text(strip=True).lower()
+                is_new_listing = 'new listing' in new_listing_text or 'new listingopens' in new_listing_text
+            
             return {
                 'id': item_id,
                 'title': title,
@@ -728,6 +802,7 @@ class ImprovedEbayStoreScraper:
                 'seller_info': seller_info,
                 'buy_format': buy_format,
                 'is_new_listing': is_new_listing,
+                'listing_date': listing_date,  # 添加上架时间
                 'timestamp': int(time.time())
             }
             
@@ -987,3 +1062,11 @@ class ImprovedEbayStoreScraper:
         except Exception as e:
             self.logger.error(f"获取下一页URL时出错: {str(e)}")
             return None
+
+    def validate_url(self, url):
+        """验证是否为有效的eBay URL"""
+        if not url:
+            return False
+        
+        # 检查是否为支持的eBay域名
+        return any(domain in url for domain in self.supported_domains)

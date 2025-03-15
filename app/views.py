@@ -491,4 +491,128 @@ def remove_store():
         return jsonify({
             'success': False,
             'message': f'删除失败: {str(e)}'
-        }) 
+        })
+
+# 添加以下路由来注册店铺监控
+
+@main.route('/api/monitor_store', methods=['POST'])
+def monitor_store():
+    """注册店铺监控"""
+    data = request.get_json()
+    
+    if not data or 'store_url' not in data or 'email' not in data:
+        return jsonify({'error': '缺少必要参数'}), 400
+    
+    store_url = data['store_url']
+    email = data['email']
+    store_name = data.get('store_name', '')
+    
+    # 如果没有提供店铺名称，尝试从URL提取
+    if not store_name:
+        if '_ssn=' in store_url:
+            store_name = store_url.split('_ssn=')[1].split('&')[0]
+        elif 'store_name=' in store_url:
+            store_name = store_url.split('store_name=')[1].split('&')[0]
+        else:
+            # 使用时间戳作为唯一标识
+            store_name = f"store_{int(time.time())}"
+    
+    # 创建店铺监控数据
+    store_data = {
+        'url': store_url,
+        'name': store_name,
+        'notify_email': email,
+        'added_at': int(time.time())
+    }
+    
+    # 存储到Redis
+    redis_key = f"monitor:store:{store_name}"
+    current_app.redis_client.set(redis_key, json.dumps(store_data))
+    
+    # 立即执行首次爬取以获取基准数据
+    try:
+        scraper = EbayStoreScraper(redis_client=current_app.redis_client)
+        items = scraper.scrape_all_pages(store_url, max_pages=3)
+        
+        # 存储初始数据
+        if items:
+            current_app.redis_client.set(f"store:{store_name}:items", json.dumps(items))
+            current_app.redis_client.set(f"store:{store_name}:last_update", int(time.time()))
+            
+            # 记录店铺商品数量
+            current_app.logger.info(f"初始爬取成功，店铺 {store_name} 有 {len(items)} 个商品")
+            
+            return jsonify({
+                'success': True,
+                'message': f'店铺 {store_name} 已添加到监控列表',
+                'store_name': store_name,
+                'items_count': len(items)
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '无法获取店铺商品数据，请检查URL是否正确'
+            }), 400
+    
+    except Exception as e:
+        current_app.logger.error(f"初始爬取失败: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'添加监控成功，但初始爬取失败: {str(e)}'
+        }), 500
+
+@main.route('/api/monitored_stores')
+def list_monitored_stores():
+    """列出所有监控的店铺"""
+    stores = []
+    
+    # 获取所有监控的店铺
+    store_keys = current_app.redis_client.keys("monitor:store:*")
+    
+    for key in store_keys:
+        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+        store_data_json = current_app.redis_client.get(key_str)
+        
+        if store_data_json:
+            try:
+                store_data = json.loads(store_data_json.decode('utf-8'))
+                # 获取最近一次更新时间
+                last_update_key = f"store:{store_data['name']}:last_update"
+                last_update = current_app.redis_client.get(last_update_key)
+                
+                if last_update:
+                    store_data['last_update'] = int(last_update)
+                
+                # 获取统计信息
+                stats_key = f"store:{store_data['name']}:stats"
+                stats_json = current_app.redis_client.get(stats_key)
+                
+                if stats_json:
+                    store_data['stats'] = json.loads(stats_json.decode('utf-8'))
+                
+                stores.append(store_data)
+            except Exception as e:
+                current_app.logger.error(f"解析店铺数据失败: {str(e)}")
+    
+    return jsonify({
+        'success': True,
+        'stores': stores
+    })
+
+@main.route('/api/test_scheduler')
+def test_scheduler():
+    """测试定时任务"""
+    try:
+        # 从scheduler模块直接导入定时任务函数
+        from app.scheduler import scrape_stores_job
+        result = scrape_stores_job()
+        
+        return jsonify({
+            'success': True,
+            'message': '定时任务执行成功'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'定时任务执行失败: {str(e)}'
+        }), 500 

@@ -3,6 +3,7 @@
 import atexit
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 import logging
 from app.improved_scraper import ImprovedEbayStoreScraper as EbayStoreScraper
 from app.notification import EmailNotifier
@@ -18,8 +19,7 @@ def init_scheduler(app):
     
     # 注册定时任务
     @scheduler.scheduled_job(
-        'interval', hours=3,   # 每3小时执行一次
-        jitter=900,            # 添加±15分钟随机抖动，避免固定时间请求
+        CronTrigger(hour=2, minute=0),  # 每天凌晨2:00执行
         id='scrape_stores_job'
     )
     def scrape_stores_job():

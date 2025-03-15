@@ -2,9 +2,10 @@
 
 from flask import Flask, jsonify, request
 import redis
-from app.config import Config
+from app.config import Config, REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD
 import time
 import json
+from app.scheduler import init_scheduler
 
 def create_app(test_config=None):
     app = Flask(__name__, 
@@ -15,10 +16,10 @@ def create_app(test_config=None):
     # 连接Redis
     try:
         redis_client = redis.Redis(
-            host=Config.REDIS_HOST,
-            port=Config.REDIS_PORT,
-            db=Config.REDIS_DB,
-            password=Config.REDIS_PASSWORD,
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            db=REDIS_DB,
+            password=REDIS_PASSWORD,
             socket_timeout=5,
             decode_responses=True  # 自动解码为Python字符串
         )
@@ -30,9 +31,9 @@ def create_app(test_config=None):
         # 使用无密码连接作为备选
         try:
             redis_client = redis.Redis(
-                host=Config.REDIS_HOST,
-                port=Config.REDIS_PORT,
-                db=Config.REDIS_DB,
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                db=REDIS_DB,
                 socket_timeout=5,
                 decode_responses=True
             )
@@ -41,16 +42,15 @@ def create_app(test_config=None):
             app.logger.error(f"Redis备选连接也失败: {e}")
             redis_client = None
 
+    # 确保使用正确的初始化函数
+    init_scheduler(app)
+    
     # 注册蓝图
     from app.views import main
     app.register_blueprint(main)
     
     # 将Redis客户端添加到应用
     app.redis_client = redis_client
-    
-    # 初始化定时任务调度器
-    from app.scheduler import init_scheduler
-    init_scheduler(app)
     
     # 添加自定义过滤器
     @app.template_filter('timestamp_to_date')
