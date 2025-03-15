@@ -7,7 +7,7 @@ import logging
 from app.config import Config  # 只导入Config类
 
 # 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class EmailNotifier:
@@ -20,6 +20,15 @@ class EmailNotifier:
         self.username = Config.MAIL_USERNAME
         self.password = Config.MAIL_PASSWORD
         self.default_sender = Config.MAIL_DEFAULT_SENDER
+        
+        # 初始化日志记录器
+        self.logger = logging.getLogger('app.notification')
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.WARNING)
     
     def send_email(self, recipient, subject, body, is_html=True):
         """发送邮件"""
@@ -52,13 +61,13 @@ class EmailNotifier:
                         pass
                     # 如果sendmail成功，则认为邮件发送成功
                     if send_success:
-                        logger.info(f"邮件已发送至 {recipient}")
+                        self.logger.info(f"邮件已发送至 {recipient}")
                         return True
                     else:
-                        logger.error(f"发送邮件失败，返回结果: {result}")
+                        self.logger.error(f"发送邮件失败，返回结果: {result}")
                         return False
                 except Exception as ssl_error:
-                    logger.error(f"SSL邮件发送失败: {ssl_error}")
+                    self.logger.error(f"SSL邮件发送失败: {ssl_error}")
                     raise
             else:
                 with smtplib.SMTP(self.server, self.port) as server:
@@ -69,12 +78,12 @@ class EmailNotifier:
             
             # 非SSL模式下的成功信息已经在上面的代码中处理
             if not self.use_ssl:
-                logger.info(f"邮件已发送至 {recipient}")
+                self.logger.info(f"邮件已发送至 {recipient}")
                 return True
             return False  # 如果代码执行到这里，说明SSL模式下没有成功
         
         except Exception as e:
-            logger.error(f"发送邮件失败: {e}")
+            self.logger.error(f"发送邮件失败: {e}")
             return False
     
     def notify_new_listings(self, recipient, store_name, new_items):
@@ -133,7 +142,7 @@ class EmailNotifier:
                         <p>价格: <strong>{item.get('currency', '$')}{price:.2f}</strong></p>
                         <p>运费: {shipping}</p>
                         <p>状态: {status}</p>
-                        <p>上架时间: {listing_date}</p>
+                        <p>上架时间: <span style="color: #0066cc; font-weight: bold;">{listing_date}</span></p>
                     </div>
                 """
             
@@ -168,7 +177,8 @@ class EmailNotifier:
     def notify_price_changes(self, recipient, store_name, price_changes):
         """通知价格变动"""
         if not price_changes:
-            return False
+            self.logger.info("没有价格变动，不发送通知")
+            return True
         
         subject = f"{store_name} - {len(price_changes)} 个商品价格变动"
         

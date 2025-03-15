@@ -10,10 +10,12 @@ import argparse
 from app.improved_scraper import ImprovedEbayStoreScraper
 from app.notification import EmailNotifier
 from app.config import Config
+from app.utils import json_dumps  # 导入自定义JSON序列化函数
 
 # 配置日志
+log_level = logging.INFO if args.verbose else logging.WARNING
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)
@@ -64,8 +66,12 @@ def test_scrape_and_notify(store_url, email, store_name=None, max_pages=3):
             except:
                 logger.warning("解析之前的数据失败")
         
-        # 爬取当前数据
-        logger.info(f"开始爬取店铺，限制 {max_pages} 页...")
+        # 爬取当前数据 - 强制至少爬取3页
+        logger.info(f"开始爬取店铺，设置为爬取 {max_pages} 页...")
+        if max_pages < 3:
+            max_pages = 3
+            logger.info(f"为确保获取更多商品，已调整为爬取 {max_pages} 页")
+            
         current_items = scraper.scrape_all_pages(store_url, max_pages=max_pages)
         
         if not current_items:
@@ -75,17 +81,27 @@ def test_scrape_and_notify(store_url, email, store_name=None, max_pages=3):
         logger.info(f"成功获取 {len(current_items)} 个商品")
         
         # 保存最新数据到Redis
-        redis_client.set(f"store:{store_name}:items", json.dumps(current_items))
+        redis_client.set(f"store:{store_name}:items", json_dumps(current_items))
         redis_client.set(f"store:{store_name}:last_update", int(time.time()))
         
-        # 找出带有New Listing标记的商品
+        # 筛选真正的"New listing"商品
         true_new_listings = []
         for item in current_items:
-            # 根据is_new_listing字段判断（该字段在爬虫解析时设置）
             if item.get('is_new_listing'):
                 true_new_listings.append(item)
                 logger.info(f"发现New Listing商品: {item.get('title')}")
-                
+        
+        # 筛选昨日上架的商品（新增功能）
+        yesterday_listings = []
+        for item in current_items:
+            # 如果已经标记为New listing就不重复添加
+            if item.get('is_yesterday_listing') and not item.get('is_new_listing'):
+                yesterday_listings.append(item)
+                logger.info(f"发现昨日上架商品: {item.get('title')} - 上架时间: {item.get('listing_date')}")
+        
+        # 如果同时有New Listing和昨日上架商品，合并它们
+        all_new_items = true_new_listings + yesterday_listings
+        
         # 比较价格变动
         price_changes = []
         if previous_items:
@@ -112,23 +128,23 @@ def test_scrape_and_notify(store_url, email, store_name=None, max_pages=3):
                         price_changes.append(price_change)
                         logger.info(f"发现价格变动商品: {item.get('title')} - 从 {prev_item.get('price')} 变为 {item.get('price')}")
         
-        # 如果没有New Listing商品且没有价格变动，结束测试
-        if not true_new_listings and not price_changes:
-            logger.info("没有发现New Listing商品或价格变动商品，不发送邮件通知")
+        # 如果没有新上架商品且没有价格变动，结束测试
+        if not all_new_items and not price_changes:
+            logger.info("没有发现New Listing商品、昨日上架商品或价格变动商品，不发送邮件通知")
             return True
         
         # 初始化邮件通知
         notifier = EmailNotifier()
         
-        # 发送New Listing商品通知
-        if true_new_listings:
-            logger.info(f"发送 {len(true_new_listings)} 个New Listing商品的邮件通知到 {email}")
-            result = notifier.notify_new_listings(email, store_name, true_new_listings)
+        # 发送新上架商品通知（包括New Listing和昨日上架）
+        if all_new_items:
+            logger.info(f"发送 {len(all_new_items)} 个新上架商品的邮件通知到 {email}")
+            result = notifier.notify_new_listings(email, store_name, all_new_items)
             
             if result:
-                logger.info("New Listing邮件发送成功！")
+                logger.info("新上架商品邮件发送成功！")
             else:
-                logger.error("New Listing邮件发送失败！")
+                logger.error("新上架商品邮件发送失败！")
         
         # 发送价格变动通知
         if price_changes:
@@ -154,6 +170,7 @@ if __name__ == "__main__":
     parser.add_argument('--email', required=True, help='通知邮箱')
     parser.add_argument('--name', help='店铺名称（可选）')
     parser.add_argument('--pages', type=int, default=3, help='爬取页数（默认3页）')
+    parser.add_argument('--verbose', '-v', action='store_true', help='显示详细日志')
     
     args = parser.parse_args()
     

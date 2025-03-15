@@ -6,6 +6,7 @@ from app.config import Config, REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD
 import time
 import json
 from app.scheduler import init_scheduler
+import logging
 
 def create_app(test_config=None):
     app = Flask(__name__, 
@@ -133,5 +134,7 @@ def create_app(test_config=None):
                 'success': False,
                 'message': f'爬取过程中出错: {str(e)}'
             }), 500
+    
+    app.logger.setLevel(logging.WARNING)
     
     return app 

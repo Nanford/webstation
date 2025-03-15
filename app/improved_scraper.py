@@ -15,6 +15,8 @@ from app.config import Config
 import logging.handlers
 from urllib.parse import urljoin
 from app.utils import is_valid_ebay_url
+from app.utils import json_dumps
+import subprocess
 
 # 配置日志
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -36,7 +38,7 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
 logger.addHandler(console_handler)
 
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 
 class ImprovedEbayStoreScraper:
     """改进的eBay店铺爬虫 - 直接访问目标URL模式"""
@@ -250,7 +252,6 @@ class ImprovedEbayStoreScraper:
     def _curl_request(self, url):
         """使用curl命令行来获取页面内容"""
         try:
-            import subprocess
             self.logger.info("尝试使用curl命令获取页面")
             
             # 创建随机cookie值
@@ -295,349 +296,31 @@ class ImprovedEbayStoreScraper:
             return None
     
     def parse_items_from_html(self, html_content):
-        """从HTML中解析所有商品信息"""
+        """从HTML解析商品列表"""
         soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # 查找主要内容区域
+        result_list = soup.select('.srp-results .s-item__wrapper')
+        self.logger.info(f"使用选择器 '.s-item__wrapper' 找到 {len(result_list)} 个商品元素")
+        
+        # 检查HTML中是否有"New listing"文本
+        if 'New listing' in html_content or 'new listing' in html_content.lower():
+            self.logger.info("HTML内容中检测到'New listing'文本")
+            # 查找所有可能的New Listing标记位置
+            new_listing_elements = soup.select('.LIGHT_HIGHLIGHT')
+            self.logger.info(f"找到 {len(new_listing_elements)} 个可能的LIGHT_HIGHLIGHT元素")
+            for i, elem in enumerate(new_listing_elements):
+                self.logger.info(f"LIGHT_HIGHLIGHT元素 #{i+1} 文本: {elem.get_text(strip=True)}")
+        
         items = []
-        
-        # 保存页面以便调试
-        try:
-            debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
-            os.makedirs(debug_dir, exist_ok=True)
-            debug_file = os.path.join(debug_dir, f'ebay_page_{int(time.time())}.html')
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            self.logger.info(f"保存了HTML页面到 {debug_file}")
-        except Exception as e:
-            self.logger.warning(f"保存HTML失败: {e}")
-        
-        # 尝试多种可能的CSS选择器
-        selector_pairs = [
-            ('.s-item__wrapper', None),
-            ('.srp-results .s-item', None),
-            ('#srp-river-results .s-item', None),
-            ('.b-list__items_nofooter .s-item', None),
-            ('li.s-item', None),
-            ('.srp-river-results li.s-item', None),
-            ('div[data-listing-id]', None)
-        ]
-        
-        for main_selector, sub_selector in selector_pairs:
-            containers = soup.select(main_selector)
-            if containers:
-                self.logger.info(f"使用选择器 '{main_selector}' 找到 {len(containers)} 个商品元素")
-                
-                # 如果存在子选择器，进一步筛选
-                if sub_selector:
-                    filtered_containers = []
-                    for container in containers:
-                        sub_elements = container.select(sub_selector)
-                        filtered_containers.extend(sub_elements)
-                    containers = filtered_containers
-                    self.logger.info(f"使用子选择器 '{sub_selector}' 筛选出 {len(containers)} 个商品元素")
-                
-                # 跳过第一个元素，因为通常是广告
-                if len(containers) > 1:
-                    containers = containers[1:]
-                
-                # 解析每个商品容器
-                for container in containers:
-                    item = self.parse_item_container(container)
-                    if item:
-                        items.append(item)
-                
-                # 如果找到了商品，就不再尝试其他选择器
-                if items:
-                    break
+        for item_element in result_list:
+            item_data = self.parse_item_element(item_element)
+            if item_data:
+                items.append(item_data)
         
         self.logger.info(f"共解析出 {len(items)} 个商品")
         return items
     
-    def parse_item_container(self, container):
-        """从容器元素解析商品信息"""
-        try:
-            # 提取最基本的商品信息
-            item_data = {}
-            
-            # 商品标题
-            title_element = container.select_one('.s-item__title')
-            if title_element:
-                title = title_element.get_text(strip=True)
-                # 跳过"Shop on eBay"广告元素
-                if title == "Shop on eBay":
-                    return None
-                item_data['title'] = title
-            
-            # 商品链接和ID
-            link_element = container.select_one('.s-item__link')
-            if link_element and 'href' in link_element.attrs:
-                url = link_element['href']
-                item_data['url'] = url
-                
-                # 提取商品ID
-                match = re.search(r'/(\d+)\?', url)
-                if match:
-                    item_id = match.group(1)
-                    item_data['id'] = item_id
-            
-            # 商品价格
-            price_data = self._extract_price(container)
-            item_data['price'] = price_data['value']
-            item_data['currency'] = price_data['currency']
-            
-            # 商品图片
-            img_element = container.select_one('.s-item__image img')
-            if img_element and 'src' in img_element.attrs:
-                image_url = img_element['src']
-                # 有时src可能是占位符，检查data-src属性
-                if 'data-src' in img_element.attrs and img_element['data-src']:
-                    image_url = img_element['data-src']
-                # 如果图片URL是相对路径，添加域名
-                if image_url.startswith('/'):
-                    image_url = 'https://www.ebay.com' + image_url
-                item_data['image_url'] = image_url
-            
-            # 获取销售数量
-            sold_element = container.select_one('.s-item__quantitySold')
-            if sold_element:
-                sold_text = sold_element.get_text(strip=True)
-                try:
-                    sold_count = int(''.join(filter(str.isdigit, sold_text)))
-                    item_data['sold_count'] = sold_count
-                except ValueError:
-                    item_data['sold_count'] = 0
-            else:
-                item_data['sold_count'] = 0
-            
-            # 添加爬取时间
-            item_data['scraped_at'] = datetime.now().isoformat()
-            
-            # 确保至少有ID和标题
-            if 'id' in item_data and 'title' in item_data:
-                return item_data
-            
-            return None
-        except Exception as e:
-            self.logger.error(f"解析商品元素时出错: {str(e)}")
-            return None
-    
-    def _add_optional_fields(self, container, item_data):
-        """安全地添加可选字段到商品数据"""
-        try:
-            # 商品状态
-            status_elem = container.select_one('.SECONDARY_INFO')
-            if status_elem:
-                item_data['status'] = status_elem.get_text(strip=True)
-            
-            # 运费信息
-            shipping_elem = container.select_one('.s-item__shipping, .s-item__freeXBorder')
-            if shipping_elem:
-                item_data['shipping'] = shipping_elem.get_text(strip=True)
-            
-            # 退货政策
-            returns_elem = container.select_one('.s-item__free-returns')
-            if returns_elem:
-                item_data['returns_policy'] = returns_elem.get_text(strip=True)
-            
-            # 购买方式
-            purchase_elem = container.select_one('.s-item__dynamic')
-            if purchase_elem:
-                item_data['purchase_type'] = purchase_elem.get_text(strip=True)
-            
-            # 卖家信息
-            seller_info_elem = container.select_one('.s-item__seller-info-text')
-            if seller_info_elem:
-                item_data['seller_info'] = seller_info_elem.get_text(strip=True)
-            
-            # 原价和折扣
-            original_price_elem = container.select_one('.STRIKETHROUGH')
-            if original_price_elem:
-                original_price_text = original_price_elem.get_text(strip=True)
-                price_match = re.search(r'[\d,\.]+', original_price_text)
-                if price_match:
-                    item_data['original_price'] = float(price_match.group(0).replace(',', ''))
-            
-            discount_elem = container.select_one('.s-item__discount')
-            if discount_elem:
-                discount_text = discount_elem.get_text(strip=True)
-                discount_match = re.search(r'(\d+)%', discount_text)
-                if discount_match:
-                    item_data['discount_percent'] = int(discount_match.group(1))
-        
-        except Exception as e:
-            logger.error(f"获取可选字段时出错: {e}")
-            # 出错时不影响主流程
-    
-    def update_store_data(self, store_url, store_name):
-        """更新店铺数据并检测变化"""
-        self.logger.info(f"更新店铺数据: {store_name}")
-        
-        # 添加随机休眠，防止频繁请求
-        cooldown = random.uniform(15, 30)  # 适当降低以匹配前端期望
-        self.logger.info(f"休眠 {cooldown:.2f} 秒，避免请求过于频繁...")
-        time.sleep(cooldown)
-        
-        # 获取店铺商品 - 使用scrape_all_pages获取所有分页商品
-        self.logger.info(f"开始使用多页爬取获取店铺 {store_name} 的所有商品...")
-        items = self.scrape_all_pages(store_url, max_pages=3)  # 设置最大爬取10页，可根据需要调整
-        
-        if not items:
-            self.logger.error(f"无法获取店铺 {store_name} 的商品数据")
-            
-            # 从备份恢复
-            backup_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backups')
-            os.makedirs(backup_dir, exist_ok=True)
-            backup_file = os.path.join(backup_dir, f"backup_{store_name}_items.json")
-            
-            if os.path.exists(backup_file):
-                self.logger.info(f"从备份文件 {backup_file} 恢复")
-                with open(backup_file, 'r', encoding='utf-8') as f:
-                    items = json.load(f)
-            else:
-                return {'new_listings': [], 'price_changes': [], 'removed_listings': []}
-        
-        self.logger.info(f"成功获取店铺 {store_name} 的商品数据，共 {len(items)} 个商品")
-        
-        # 将商品列表转换为以ID为键的字典
-        current_items_dict = {item['id']: item for item in items if 'id' in item}
-        
-        # 获取以前的商品列表
-        previous_items_json = self.redis.get(f"store:{store_name}:items")
-        
-        new_listings = []
-        price_changes = []
-        removed_listings = []
-        
-        # 检查是否存在旧数据
-        if previous_items_json:
-            try:
-                previous_items = json.loads(previous_items_json)
-                previous_items_dict = {item['id']: item for item in previous_items if 'id' in item}
-                
-                # 检查新上架和价格变动的商品
-                for item_id, current_item in current_items_dict.items():
-                    if item_id not in previous_items_dict:
-                        # 新上架商品
-                        new_listings.append(current_item)
-                    else:
-                        # 检查价格是否变动
-                        previous_item = previous_items_dict[item_id]
-                        current_price_text = current_item.get('price_text', str(current_item.get('price', 0)))
-                        previous_price_text = previous_item.get('price_text', str(previous_item.get('price', 0)))
-                        
-                        if current_price_text != previous_price_text:
-                            # 价格变动
-                            change = {
-                                'id': item_id,
-                                'title': current_item['title'],
-                                'url': current_item['url'],
-                                'image_url': current_item.get('image_url', ''),
-                                'old_price_text': previous_price_text,
-                                'new_price_text': current_price_text,
-                                'timestamp': int(time.time())
-                            }
-                            price_changes.append(change)
-                
-                # 检查下架商品
-                for item_id, previous_item in previous_items_dict.items():
-                    if item_id not in current_items_dict:
-                        # 商品下架
-                        removed_listings.append(previous_item)
-            except Exception as e:
-                self.logger.error(f"处理商品变化时出错: {e}")
-                # 所有商品视为新上架
-                new_listings = items
-        else:
-            # 没有旧数据，所有商品都是新上架
-            new_listings = items
-        
-        # 保存当前商品列表到Redis
-        if self.redis:
-            self.redis.set(f"store:{store_name}:items", json.dumps(items))
-            
-            # 保存更新时间
-            self.redis.set(f"store:{store_name}:last_update", int(time.time()))
-            
-            # 更新店铺统计信息
-            self.redis.set(f"store:{store_name}:stats", json.dumps({
-                'total_items': len(items),
-                'new_items': len(new_listings),
-                'price_changes': len(price_changes),
-                'removed_items': len(removed_listings),
-                'update_time': int(time.time())
-            }))
-        
-        # 创建备份
-        backup_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backups')
-        os.makedirs(backup_dir, exist_ok=True)
-        backup_file = os.path.join(backup_dir, f"backup_{store_name}_items.json")
-        with open(backup_file, 'w', encoding='utf-8') as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
-        
-        # 记录变更
-        if new_listings:
-            self.logger.info(f"发现 {len(new_listings)} 个新上架商品")
-        if price_changes:
-            self.logger.info(f"发现 {len(price_changes)} 个价格变动")
-        if removed_listings:
-            self.logger.info(f"发现 {len(removed_listings)} 个下架商品")
-        
-        return {
-            'new_listings': new_listings,
-            'price_changes': price_changes,
-            'removed_listings': removed_listings
-        }
-
-    def get_stats(self):
-        """获取爬虫统计信息"""
-        self.stats['success_rate'] = 0
-        if self.stats['requests'] > 0:
-            self.stats['success_rate'] = (self.stats['successful_requests'] / self.stats['requests']) * 100
-        
-        return self.stats
-
-    def _handle_captcha(self, html_content):
-        """检测并尝试处理验证码"""
-        # 检查是否包含验证码或机器人检测
-        if 'captcha' in html_content.lower() or 'robot' in html_content.lower():
-            logger.warning("检测到验证码或机器人检测页面")
-            
-            # 保存页面以便调试
-            debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
-            os.makedirs(debug_dir, exist_ok=True)
-            
-            debug_file = os.path.join(debug_dir, f"captcha_page_{int(time.time())}.html")
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            
-            logger.info(f"验证码页面已保存至 {debug_file}")
-            return True
-        
-        return False
-
-    def _avoid_detection(self):
-        """通过更改请求特征来避免检测"""
-        # 使用更真实的设备指纹
-        platform = random.choice(['Windows NT 10.0', 'Macintosh; Intel Mac OS X 10_15', 'X11; Linux x86_64'])
-        chrome_version = f"{random.randint(90, 122)}.0.{random.randint(1000, 9999)}.{random.randint(10, 999)}"
-        
-        user_agent = f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36"
-        
-        self.headers['User-Agent'] = user_agent
-        
-        # 添加更多随机参数
-        if random.random() > 0.5:
-            self.headers['Referer'] = 'https://www.ebay.com/'
-        
-        # 添加各种随机cookie
-        cf_clearance = ''.join(random.choices('0123456789abcdef', k=32))
-        self.headers['Cookie'] = f"cf_clearance={cf_clearance}; dp1=bu1p/QEBfX0BAX19AQA**{cf_clearance}^"
-
-    def _generate_random_id(self, length=16):
-        """生成随机ID用于cookie"""
-        import string
-        chars = string.ascii_letters + string.digits
-        return ''.join(random.choice(chars) for _ in range(length))
-
     def parse_item_element(self, element):
         """解析单个商品元素"""
         try:
@@ -653,26 +336,42 @@ class ImprovedEbayStoreScraper:
             # 检测是否为新上架商品（不区分大小写）
             is_new_listing = False
             
-            # 方法1：检查标题中的LIGHT_HIGHLIGHT类标签（基于您提供的HTML结构）
-            highlight_element = element.select_one('.s-item__title .LIGHT_HIGHLIGHT')
-            if highlight_element:
-                highlight_text = highlight_element.get_text(strip=True).lower()
-                is_new_listing = 'new listing' in highlight_text
+            # 保存元素HTML用于调试
+            element_html = str(element)
+            debug_dir = '/var/www/ebay-store-monitor/debug/items/'
+            os.makedirs(debug_dir, exist_ok=True)
+            with open(f"{debug_dir}/item_{int(time.time())}_{hash(element_html) % 10000}.html", 'w', encoding='utf-8') as f:
+                f.write(element_html)
             
-            # 备用方法2：检查商品描述中是否包含New Listing文本
-            if not is_new_listing:
-                description_element = element.select_one('.s-item__subtitle')
-                if description_element:
-                    description_text = description_element.get_text(strip=True)
-                    is_new_listing = 'new listing' in description_text.lower()
+            # 方法1: 直接搜索"New listing"字符串（最可靠的方法）
+            if 'New listing' in element_html or 'new listing' in element_html.lower():
+                is_new_listing = True
+                self.logger.info(f"在HTML中找到'New listing'文本: {title[:50]}...")
             
-            # 备用方法3：检查其他可能的位置
+            # 方法2: 检查LIGHT_HIGHLIGHT类（您提供的HTML结构）
             if not is_new_listing:
-                for tag in element.select('.s-item__dynamic'):
-                    tag_text = tag.get_text(strip=True)
-                    if 'new listing' in tag_text.lower():
+                highlight_elements = element.select('.LIGHT_HIGHLIGHT')
+                for highlight in highlight_elements:
+                    text = highlight.get_text(strip=True)
+                    if 'new listing' in text.lower():
                         is_new_listing = True
+                        self.logger.info(f"在LIGHT_HIGHLIGHT中找到'New listing': {text} - {title[:50]}...")
                         break
+            
+            # 方法3: 检查标题区域中的所有span元素
+            if not is_new_listing:
+                title_element = element.select_one('.s-item__title')
+                if title_element:
+                    for span in title_element.select('span'):
+                        text = span.get_text(strip=True)
+                        if 'new listing' in text.lower():
+                            is_new_listing = True
+                            self.logger.info(f"在标题span中找到'New listing': {text} - {title[:50]}...")
+                            break
+            
+            # 记录结果
+            if is_new_listing:
+                self.logger.info(f"✅ 确认为New listing: {title[:50]}...")
             
             # 商品URL
             link_element = element.select_one('.s-item__link')
@@ -771,30 +470,81 @@ class ImprovedEbayStoreScraper:
                 buy_format = format_element.get_text(strip=True)
             
             # 获取上架时间 - 支持多种格式
-            listing_date = None
-            listing_date_element = element.select_one('.s-item__listingDate')
-            if listing_date_element:
-                listing_date_text = listing_date_element.get_text(strip=True)
-                # 移除前缀，支持多语言
-                if ":" in listing_date_text:
-                    listing_date = listing_date_text.split(":", 1)[1].strip()
+            listing_date = "未知"
+            parsed_date = None  # 新增：用于存储解析后的日期对象
+            
+            # 方法1：查找日期标签内的BOLD文本（常见格式）
+            date_element = element.select_one('.s-item__listingDate')
+            if date_element:
+                bold_span = date_element.select_one('.BOLD')
+                if bold_span:
+                    listing_date = bold_span.get_text(strip=True)
                 else:
-                    listing_date = listing_date_text
+                    listing_date = date_element.get_text(strip=True)
+                
+                self.logger.info(f"找到上架时间: {listing_date}")
+                
+                # 解析"14-Mar 11:46"这种格式
+                import datetime
+                date_pattern = re.compile(r'(\d{1,2})-([A-Za-z]{3})\s+(\d{1,2}):(\d{2})')
+                match = date_pattern.search(listing_date)
+                
+                if match:
+                    day = int(match.group(1))
+                    month_abbr = match.group(2)
+                    hour = int(match.group(3))
+                    minute = int(match.group(4))
+                    
+                    # 月份缩写转数字
+                    months = {
+                        'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+                    }
+                    
+                    month = months.get(month_abbr, 0)
+                    if month > 0:
+                        # 假设是今年
+                        current_year = datetime.datetime.now().year
+                        
+                        # 构建完整日期时间
+                        try:
+                            parsed_date = datetime.datetime(
+                                year=current_year, 
+                                month=month, 
+                                day=day,
+                                hour=hour,
+                                minute=minute
+                            )
+                            
+                            # 格式化为更友好的表示
+                            formatted_date = parsed_date.strftime('%Y年%m月%d日 %H:%M:%S')
+                            listing_date = f"{listing_date} (完整日期: {formatted_date})"
+                            self.logger.info(f"转换为完整日期: {listing_date}")
+                        except ValueError as e:
+                            self.logger.warning(f"日期转换失败: {e}")
             
-            # 另一种可能的日期选择器
-            if not listing_date:
-                date_element = element.select_one('.s-item__dynamic.s-item__listingDate')
-                if date_element:
-                    date_text = date_element.get_text(strip=True)
-                    if ":" in date_text:
-                        listing_date = date_text.split(":", 1)[1].strip()
-                    else:
+            # 备用方法：查找其他可能包含日期的元素
+            if listing_date == "未知":
+                for dynamic in element.select('.s-item__dynamic'):
+                    if 'listingDate' in dynamic.get('class', []):
+                        continue  # 已经处理过
+                    
+                    date_text = dynamic.get_text(strip=True)
+                    if '上架' in date_text or 'listed' in date_text.lower() or re.search(r'\d{1,2}-[A-Za-z]{3}', date_text):
                         listing_date = date_text
+                        self.logger.info(f"从其他元素获取上架时间: {listing_date}")
+                        break
             
-            # 新增：支持英国格式的日期 (14-Mar 11:46)
-            time_element = element.select_one('span.POSITIVE')
-            if time_element:
-                listing_date = time_element.get_text(strip=True)
+            # 新增：检查是否为昨日上架
+            is_yesterday_listing = False
+            if parsed_date:
+                today = datetime.datetime.now().date()
+                yesterday = today - datetime.timedelta(days=1)
+                
+                listing_date_only = parsed_date.date()
+                if listing_date_only == yesterday:
+                    is_yesterday_listing = True
+                    self.logger.info(f"检测到昨日上架商品: {title[:50]}... 上架时间: {listing_date}")
             
             return {
                 'id': item_id,
@@ -812,12 +562,14 @@ class ImprovedEbayStoreScraper:
                 'seller_info': seller_info,
                 'buy_format': buy_format,
                 'is_new_listing': is_new_listing,
+                'is_yesterday_listing': is_yesterday_listing,  # 新增：昨日上架标记
                 'listing_date': listing_date,
+                'parsed_date': parsed_date,  # 新增：解析后的日期对象
                 'timestamp': int(time.time())
             }
             
         except Exception as e:
-            self.logger.error(f"解析商品元素失败: {e}")
+            self.logger.error(f"解析商品元素失败: {str(e)}")
             return None
 
     def _extract_item_id(self, element):
@@ -914,80 +666,161 @@ class ImprovedEbayStoreScraper:
             self.logger.error(f"提取价格时出错: {e}")
             return {'value': 0, 'currency': '$', 'price_text': ''}
 
-    def scrape_all_pages(self, store_url, max_pages=None):
-        """
-        抓取多页数据，更全面地获取店铺商品
-        
-        Args:
-            store_url: eBay店铺URL
-            max_pages: 最大爬取页数，None表示不限制
-                
-        Returns:
-            包含所有分页商品的列表
-        """
+    def scrape_all_pages(self, url, max_pages=None):
+        """爬取所有页面的商品信息"""
+        self.logger.info(f"开始多页爬取eBay店铺: {url}")
         all_items = []
-        current_url = store_url
-        current_page = 1
-        processed_urls = set()  # 跟踪已处理的URL，避免陷入循环
+        page_num = 1
+        current_url = url
         
-        self.logger.info(f"开始多页爬取，起始URL: {store_url}")
+        # 确保URL中有正确的排序参数（最近上架优先）
+        if '_sop=' not in current_url:
+            separator = '&' if '?' in current_url else '?'
+            current_url = f"{current_url}{separator}_sop=10"
+            self.logger.info(f"添加了排序参数，更新后的URL: {current_url}")
+        
+        # 构造基础URL，用于后续分页
+        base_url = current_url
         
         while True:
+            self.logger.info(f"正在爬取第 {page_num} 页: {current_url}")
+            
+            # 获取当前页面的HTML内容
+            html_content = self._get_html_content(current_url)
+            if not html_content:
+                self.logger.error(f"无法获取页面内容，URL: {current_url}")
+                break
+            
+            # 解析当前页面的商品信息
+            items = self.parse_items_from_html(html_content)
+            if items:
+                all_items.extend(items)
+                self.logger.info(f"第 {page_num} 页爬取成功，获取到 {len(items)} 个商品")
+            else:
+                self.logger.warning(f"第 {page_num} 页没有找到商品")
+            
             # 检查是否达到最大页数限制
-            if max_pages and current_page > max_pages:
-                self.logger.info(f"已达到最大页数限制({max_pages}页)，停止爬取")
+            if max_pages and page_num >= max_pages:
+                self.logger.info(f"已达到最大页数限制 ({max_pages} 页)，停止爬取")
                 break
+            
+            # ------------ 关键修改：强化翻页逻辑 ------------
+            # 1. 尝试从HTML中提取"下一页"链接
+            next_page_url = None
+            
+            # 保存HTML用于调试
+            debug_path = f"/var/www/ebay-store-monitor/debug/pagination_page_{page_num}.html"
+            with open(debug_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            self.logger.info(f"已保存第 {page_num} 页HTML到 {debug_path}")
+            
+            try:
+                soup = BeautifulSoup(html_content, 'html.parser')
+                # 寻找各种可能的"下一页"链接
+                next_buttons = []
                 
-            # 防止URL重复处理
-            if current_url in processed_urls:
-                self.logger.warning(f"检测到URL重复，爬取结束: {current_url}")
-                break
+                # 方法1: 官方分页控件
+                next_buttons.extend(soup.select('.pagination__next'))
+                next_buttons.extend(soup.select('a.pagination__item[rel="next"]'))
                 
-            processed_urls.add(current_url)
-            
-            # 添加随机延迟，避免被反爬
-            if current_page > 1:  # 第一页不延迟，因为会在get_store_items中延迟
-                delay = random.uniform(8.0, 15.0)  # 增加延迟时间，避免触发反爬
-                self.logger.info(f"等待 {delay:.2f} 秒后请求第 {current_page} 页...")
-                time.sleep(delay)
-            
-            # 获取当前页商品
-            self.logger.info(f"正在爬取第 {current_page} 页: {current_url}")
-            
-            # 使用既有方法获取单页数据
-            current_page_items = self.get_store_items(current_url)
-            
-            if not current_page_items:
-                self.logger.warning(f"第 {current_page} 页没有获取到商品数据，爬取结束")
-                break
+                # 方法2: 包含"Next"文本的链接
+                for a in soup.select('a'):
+                    if a.get_text(strip=True) in ['Next', '下一页', 'Next page']:
+                        next_buttons.append(a)
                 
-            self.logger.info(f"第 {current_page} 页获取到 {len(current_page_items)} 个商品")
-            all_items.extend(current_page_items)
+                # 检查找到的按钮
+                self.logger.info(f"找到 {len(next_buttons)} 个可能的'下一页'按钮")
+                
+                # 尝试从按钮中获取URL
+                for btn in next_buttons:
+                    href = btn.get('href')
+                    if href:
+                        next_page_url = href
+                        self.logger.info(f"从按钮获取到下一页URL: {next_page_url}")
+                        break
+            except Exception as e:
+                self.logger.error(f"从HTML提取下一页URL失败: {str(e)}")
             
-            # 获取下一页URL
-            next_page_url = self._get_next_page_url(current_url, current_url)
-            
+            # 2. 如果没有找到"下一页"链接，手动构造
             if not next_page_url:
-                self.logger.info(f"没有找到下一页，爬取结束")
-                break
+                self.logger.info("没有从HTML中找到下一页链接，尝试手动构造")
                 
+                # 如果已经有页码参数，替换它
+                next_page = page_num + 1
+                if '_pgn=' in base_url:
+                    next_page_url = re.sub(r'_pgn=\d+', f'_pgn={next_page}', base_url)
+                else:
+                    # 否则添加页码参数
+                    separator = '&' if '?' in base_url else '?'
+                    next_page_url = f"{base_url}{separator}_pgn={next_page}"
+                    
+                self.logger.info(f"手动构造的下一页URL: {next_page_url}")
+            
+            # 3. 使用构造的URL继续爬取
             current_url = next_page_url
-            current_page += 1
+            page_num += 1
+            
+            # 添加延迟，避免频繁请求
+            time.sleep(1)
         
-        self.logger.info(f"多页爬取完成，共爬取 {current_page} 页，获取 {len(all_items)} 个商品")
-        
-        # 去重
-        unique_items = {}
-        for item in all_items:
-            if 'id' in item and item['id']:
-                unique_items[item['id']] = item
-                
-        return list(unique_items.values())
-
-    def _get_next_page_url(self, html_content, current_url):
-        """从HTML中提取下一页的URL"""
-        # ... 方法实现 ...
+        self.logger.info(f"多页爬取完成，共爬取 {page_num-1} 页，获取 {len(all_items)} 个商品")
+        return all_items
 
     def validate_url(self, url):
         """验证是否为有效的eBay URL"""
         return is_valid_ebay_url(url)
+
+    def _get_html_content(self, url):
+        """获取页面HTML内容"""
+        self.logger.info(f"正在获取页面内容: {url}")
+        
+        try:
+            # 使用请求库获取HTML内容
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+            
+            # 添加随机延迟，避免被识别为爬虫
+            time.sleep(random.uniform(0.5, 2.0))
+            
+            # 使用curl命令获取HTML内容 (更可靠)
+            curl_command = [
+                'curl', '-s', '-L',
+                '-A', headers['User-Agent'],
+                '-H', f'Accept: {headers["Accept"]}',
+                '-H', f'Accept-Language: {headers["Accept-Language"]}',
+                url
+            ]
+            
+            result = subprocess.run(curl_command, capture_output=True, text=True)
+            html_content = result.stdout
+            
+            if not html_content:
+                self.logger.error(f"curl返回空内容: {result.stderr}")
+                return None
+            
+            # 保存HTML内容用于调试
+            debug_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'debug')
+            os.makedirs(debug_dir, exist_ok=True)
+            
+            html_filename = os.path.join(debug_dir, f"ebay_page_{int(time.time())}.html")
+            with open(html_filename, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            self.logger.info(f"保存了HTML页面到 {html_filename}")
+            
+            # 检查页面内容是否有效
+            items_count = html_content.count('s-item__wrapper')
+            if items_count > 0:
+                self.logger.info(f"通过curl成功获取HTML内容，检测到约 {items_count} 个商品元素")
+            else:
+                self.logger.warning("获取的HTML内容中没有检测到商品元素")
+            
+            return html_content
+            
+        except Exception as e:
+            self.logger.error(f"获取HTML内容时出错: {str(e)}")
+            return None
