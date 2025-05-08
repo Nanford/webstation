@@ -336,14 +336,10 @@ class ImprovedEbayStoreScraper:
             # 检测是否为新上架商品（不区分大小写）
             is_new_listing = False
             
-            # 保存元素HTML用于调试
+            # 移除调试文件保存逻辑，直接进行处理
             element_html = str(element)
-            debug_dir = '/var/www/ebay-store-monitor/debug/items/'
-            os.makedirs(debug_dir, exist_ok=True)
-            with open(f"{debug_dir}/item_{int(time.time())}_{hash(element_html) % 10000}.html", 'w', encoding='utf-8') as f:
-                f.write(element_html)
             
-            # 方法1: 直接搜索"New listing"字符串（最可靠的方法）
+            # 方法1: 直接搜索"New listing"字符串
             if 'New listing' in element_html or 'new listing' in element_html.lower():
                 is_new_listing = True
                 self.logger.info(f"在HTML中找到'New listing'文本: {title[:50]}...")
@@ -824,3 +820,94 @@ class ImprovedEbayStoreScraper:
         except Exception as e:
             self.logger.error(f"获取HTML内容时出错: {str(e)}")
             return None
+
+    def update_store_data(self, store_url, store_name):
+        """更新店铺数据并检测变化"""
+        self.logger.info(f"开始更新店铺数据: {store_name}")
+        result = {
+            'new_listings': [],
+            'price_changes': [],
+            'removed_listings': []
+        }
+        
+        try:
+            # 获取之前的数据
+            previous_items = []
+            previous_items_json = self.redis.get(f"store:{store_name}:items")
+            if previous_items_json:
+                try:
+                    previous_items = json.loads(previous_items_json)
+                    self.logger.info(f"找到之前的数据，共 {len(previous_items)} 个商品")
+                except:
+                    self.logger.warning(f"解析之前的数据失败，将视为首次爬取")
+            
+            # 爬取当前数据
+            current_items = self.scrape_all_pages(store_url, max_pages=3)
+            if not current_items:
+                self.logger.error(f"未能获取到任何商品，可能URL有误或店铺暂时无法访问")
+                return result
+            
+            self.logger.info(f"成功获取 {len(current_items)} 个商品")
+            
+            # 保存当前数据
+            self.redis.set(f"store:{store_name}:items", json_dumps(current_items))
+            self.redis.set(f"store:{store_name}:last_update", int(time.time()))
+            
+            # 如果没有之前的数据，则所有商品都视为新上架
+            if not previous_items:
+                self.logger.info(f"没有找到之前的数据，将所有 {len(current_items)} 个商品视为新上架")
+                result['new_listings'] = current_items
+                return result
+            
+            # 创建字典以便快速查找
+            previous_items_dict = {item.get('id'): item for item in previous_items if item.get('id')}
+            current_items_dict = {item.get('id'): item for item in current_items if item.get('id')}
+            
+            # 检查新上架和价格变动的商品
+            for item_id, current_item in current_items_dict.items():
+                if item_id not in previous_items_dict:
+                    # 新上架商品
+                    result['new_listings'].append(current_item)
+                    self.logger.info(f"发现新上架商品: {current_item.get('title')}")
+                else:
+                    # 检查价格是否变动
+                    previous_item = previous_items_dict[item_id]
+                    prev_price = previous_item.get('price')
+                    curr_price = current_item.get('price')
+                    
+                    if prev_price is not None and curr_price is not None and prev_price != curr_price:
+                        # 价格变动
+                        price_change = {
+                            'item': current_item,
+                            'old_price': prev_price,
+                            'new_price': curr_price
+                        }
+                        result['price_changes'].append(price_change)
+                        self.logger.info(f"发现价格变动商品: {current_item.get('title')} - 从 {prev_price} 变为 {curr_price}")
+            
+            # 检查下架的商品
+            for item_id, previous_item in previous_items_dict.items():
+                if item_id not in current_items_dict:
+                    # 下架商品
+                    result['removed_listings'].append(previous_item)
+                    self.logger.info(f"发现下架商品: {previous_item.get('title')}")
+            
+            # 更新统计信息
+            stats = {
+                'total_items': len(current_items),
+                'new_listings': len(result['new_listings']),
+                'price_changes': len(result['price_changes']),
+                'removed_listings': len(result['removed_listings']),
+                'last_update': int(time.time())
+            }
+            self.redis.set(f"store:{store_name}:stats", json_dumps(stats))
+            
+            self.logger.info(f"店铺 {store_name} 数据更新完成 - 新商品: {stats['new_listings']}, "
+                            f"价格变动: {stats['price_changes']}, 下架商品: {stats['removed_listings']}")
+            
+            return result
+        
+        except Exception as e:
+            self.logger.error(f"更新店铺数据时出错: {str(e)}")
+            # 返回空结果
+            return result

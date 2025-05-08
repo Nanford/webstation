@@ -13,7 +13,7 @@ from app.config import Config
 from app.utils import json_dumps  # 导入自定义JSON序列化函数
 
 # 配置日志
-log_level = logging.INFO if args.verbose else logging.WARNING
+log_level = logging.INFO 
 logging.basicConfig(
     level=log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

@@ -2,7 +2,7 @@
 
 from flask import Flask, jsonify, request
 import redis
-from app.config import Config, REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD
+from app.config import Config
 import time
 import json
 from app.scheduler import init_scheduler
@@ -17,10 +17,10 @@ def create_app(test_config=None):
     # 连接Redis
     try:
         redis_client = redis.Redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-            db=REDIS_DB,
-            password=REDIS_PASSWORD,
+            host=Config.REDIS_HOST,
+            port=Config.REDIS_PORT,
+            db=Config.REDIS_DB,
+            password=Config.REDIS_PASSWORD,
             socket_timeout=5,
             decode_responses=True  # 自动解码为Python字符串
         )
@@ -32,9 +32,9 @@ def create_app(test_config=None):
         # 使用无密码连接作为备选
         try:
             redis_client = redis.Redis(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                db=REDIS_DB,
+                host=Config.REDIS_HOST,
+                port=Config.REDIS_PORT,
+                db=Config.REDIS_DB,
                 socket_timeout=5,
                 decode_responses=True
             )
@@ -135,6 +135,6 @@ def create_app(test_config=None):
                 'message': f'爬取过程中出错: {str(e)}'
             }), 500
     
-    app.logger.setLevel(logging.WARNING)
+    app.logger.setLevel(logging.INFO)
     
     return app 
