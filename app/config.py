@@ -11,7 +11,7 @@ class Config:
     REDIS_HOST = os.environ.get('REDIS_HOST') or 'localhost'
     REDIS_PORT = int(os.environ.get('REDIS_PORT') or 6379)
     REDIS_DB = int(os.environ.get('REDIS_DB') or 0)
-    REDIS_PASSWORD = 'Lin%123'  # 确认这是正确密码
+    REDIS_PASSWORD = '******'  # 确认这是正确密码
     REDIS_USERNAME = None  # 或者设置实际用户名
     
     # 邮件配置
@@ -19,9 +19,9 @@ class Config:
     MAIL_PORT = 465
     MAIL_USE_TLS = False
     MAIL_USE_SSL = True
-    MAIL_USERNAME = '843395729@qq.com'  # 例如：12345678@qq.com
-    MAIL_PASSWORD = 'prdenjymtcubbehj'  # 不是QQ密码
-    MAIL_DEFAULT_SENDER = '843395729@qq.com'
+    MAIL_USERNAME = '***********'  # 例如：12345678@qq.com
+    MAIL_PASSWORD = '*************'  # 不是QQ密码
+    MAIL_DEFAULT_SENDER = '**************'
     
     # 爬虫配置
     SCRAPE_INTERVAL = int(os.environ.get('SCRAPE_INTERVAL') or 3600)  # 默认每小时爬取一次
