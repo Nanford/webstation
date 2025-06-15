@@ -5,6 +5,7 @@ import json
 import time
 from app.improved_scraper import ImprovedEbayStoreScraper as EbayStoreScraper
 from app.notification import EmailNotifier
+from app.comparison import PriceComparison
 import re
 import urllib.parse
 from app.utils import is_valid_ebay_url
@@ -16,6 +17,12 @@ main = Blueprint('main', __name__)
 @main.route('/')
 def index():
     return render_template('index.html')
+
+# 价格对比页面
+@main.route('/comparison')
+def comparison():
+    """价格对比监控页面"""
+    return render_template('comparison.html')
 
 # 添加店铺监控
 @main.route('/add_store', methods=['POST'])
@@ -623,4 +630,249 @@ def test_scheduler():
         return jsonify({
             'success': False,
             'message': f'定时任务执行失败: {str(e)}'
+        }), 500 
+
+# ========== 价格对比功能 API ==========
+
+@main.route('/api/comparison', methods=['POST'])
+def create_comparison():
+    """创建价格对比配置"""
+    try:
+        data = request.get_json()
+        
+        # 验证必要参数
+        required_fields = ['my_listing_url', 'competitor_listing_url', 'notify_email']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({
+                    'success': False,
+                    'message': f'缺少必要参数: {field}'
+                }), 400
+        
+        # 验证邮箱格式
+        email = data['notify_email']
+        if not re.match(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$', email):
+            return jsonify({
+                'success': False,
+                'message': '邮箱格式无效'
+            }), 400
+        
+        # 创建价格对比实例
+        comparison = PriceComparison(redis_client=current_app.redis_client)
+        
+        # 处理通知条件
+        notify_conditions = data.get('notify_conditions', {
+            'higher': True,
+            'lower': True,
+            'threshold': 5.0
+        })
+        
+        # 创建对比配置
+        config = comparison.create_comparison(
+            my_listing_url=data['my_listing_url'],
+            competitor_listing_url=data['competitor_listing_url'],
+            notify_email=email,
+            name=data.get('name'),
+            notify_conditions=notify_conditions
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': '价格对比配置创建成功',
+            'comparison_id': config['id'],
+            'config': config
+        })
+        
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 400
+    except Exception as e:
+        current_app.logger.error(f"创建价格对比配置时出错: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'创建失败: {str(e)}'
+        }), 500
+
+@main.route('/api/comparisons')
+def get_comparisons():
+    """获取所有价格对比配置"""
+    try:
+        comparison = PriceComparison(redis_client=current_app.redis_client)
+        comparisons = comparison.get_all_comparisons()
+        
+        # 为每个配置添加最新的对比结果
+        for config in comparisons:
+            latest_result = comparison.get_latest_comparison_result(config['id'])
+            config['latest_result'] = latest_result
+        
+        return jsonify({
+            'success': True,
+            'comparisons': comparisons,
+            'total': len(comparisons)
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"获取价格对比配置列表时出错: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'获取列表失败: {str(e)}'
+        }), 500
+
+@main.route('/api/comparison/<comparison_id>', methods=['DELETE'])
+def delete_comparison(comparison_id):
+    """删除价格对比配置"""
+    try:
+        comparison = PriceComparison(redis_client=current_app.redis_client)
+        
+        # 检查配置是否存在
+        config = comparison.get_comparison_config(comparison_id)
+        if not config:
+            return jsonify({
+                'success': False,
+                'message': '找不到指定的对比配置'
+            }), 404
+        
+        # 删除配置
+        comparison.delete_comparison(comparison_id)
+        
+        return jsonify({
+            'success': True,
+            'message': f'已删除价格对比配置: {config.get("name", comparison_id)}'
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"删除价格对比配置时出错: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'删除失败: {str(e)}'
+        }), 500
+
+@main.route('/api/comparison/<comparison_id>/history')
+def get_comparison_history(comparison_id):
+    """获取价格对比历史"""
+    try:
+        comparison = PriceComparison(redis_client=current_app.redis_client)
+        
+        # 检查配置是否存在
+        config = comparison.get_comparison_config(comparison_id)
+        if not config:
+            return jsonify({
+                'success': False,
+                'message': '找不到指定的对比配置'
+            }), 404
+        
+        # 获取历史记录
+        limit = request.args.get('limit', 20, type=int)
+        history = comparison.get_comparison_history(comparison_id, limit=limit)
+        
+        return jsonify({
+            'success': True,
+            'comparison_id': comparison_id,
+            'config': config,
+            'history': history,
+            'total': len(history)
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"获取价格对比历史时出错: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'获取历史失败: {str(e)}'
+        }), 500
+
+@main.route('/api/comparison/<comparison_id>/check', methods=['POST'])
+def manual_comparison_check(comparison_id):
+    """手动执行价格对比检查"""
+    try:
+        comparison = PriceComparison(redis_client=current_app.redis_client)
+        
+        # 检查配置是否存在
+        config = comparison.get_comparison_config(comparison_id)
+        if not config:
+            return jsonify({
+                'success': False,
+                'message': '找不到指定的对比配置'
+            }), 404
+        
+        # 执行对比检查
+        result = comparison.perform_comparison(comparison_id)
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'message': '价格对比检查完成',
+                'result': result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '价格对比检查失败，请查看日志了解详情'
+            }), 500
+        
+    except Exception as e:
+        current_app.logger.error(f"执行手动价格对比检查时出错: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'检查失败: {str(e)}'
+        }), 500
+
+@main.route('/api/comparison/check_all', methods=['POST'])
+def check_all_comparisons():
+    """执行所有活跃的价格对比检查"""
+    try:
+        comparison = PriceComparison(redis_client=current_app.redis_client)
+        
+        # 执行所有对比检查
+        results = comparison.perform_all_comparisons()
+        
+        return jsonify({
+            'success': True,
+            'message': f'批量检查完成 - 成功: {results["successful_checks"]}, 失败: {results["failed_checks"]}',
+            'results': results
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"执行批量价格对比检查时出错: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'批量检查失败: {str(e)}'
+        }), 500
+
+@main.route('/api/comparison/<comparison_id>/toggle', methods=['POST'])
+def toggle_comparison_status(comparison_id):
+    """切换价格对比配置的状态（启用/暂停）"""
+    try:
+        comparison = PriceComparison(redis_client=current_app.redis_client)
+        
+        # 获取当前配置
+        config = comparison.get_comparison_config(comparison_id)
+        if not config:
+            return jsonify({
+                'success': False,
+                'message': '找不到指定的对比配置'
+            }), 404
+        
+        # 切换状态
+        current_status = config.get('status', 'active')
+        new_status = 'paused' if current_status == 'active' else 'active'
+        
+        config['status'] = new_status
+        config_key = f"comparison:config:{comparison_id}"
+        current_app.redis_client.set(config_key, json.dumps(config))
+        
+        status_text = '启用' if new_status == 'active' else '暂停'
+        
+        return jsonify({
+            'success': True,
+            'message': f'已{status_text}价格对比配置: {config.get("name", comparison_id)}',
+            'status': new_status
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"切换价格对比配置状态时出错: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'操作失败: {str(e)}'
         }), 500 

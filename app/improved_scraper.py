@@ -17,6 +17,7 @@ from urllib.parse import urljoin
 from app.utils import is_valid_ebay_url
 from app.utils import json_dumps
 import subprocess
+from typing import Optional, Dict
 
 # 配置日志
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -911,3 +912,259 @@ class ImprovedEbayStoreScraper:
             self.logger.error(f"更新店铺数据时出错: {str(e)}")
             # 返回空结果
             return result
+    
+    def get_single_listing_info(self, listing_url: str, max_retries: int = 3) -> Optional[Dict]:
+        """获取单个eBay商品的价格和基本信息"""
+        self.logger.info(f"开始获取单个商品信息: {listing_url}")
+        
+        if not self.validate_url(listing_url):
+            self.logger.error(f"无效的eBay URL: {listing_url}")
+            return None
+        
+        for attempt in range(max_retries):
+            try:
+                # 随机延迟
+                delay = random.uniform(3.0, 8.0)
+                if attempt > 0:
+                    self.logger.info(f"重试第 {attempt} 次，等待 {delay:.2f} 秒...")
+                time.sleep(delay)
+                
+                # 获取页面内容
+                html_content = self._get_single_listing_html(listing_url)
+                if not html_content:
+                    self.logger.warning(f"第 {attempt + 1} 次尝试获取页面内容失败")
+                    continue
+                
+                # 解析商品信息
+                item_info = self._parse_single_listing(html_content, listing_url)
+                if item_info:
+                    self.logger.info(f"成功获取商品信息: {item_info.get('title', 'Unknown')[:50]}...")
+                    return item_info
+                else:
+                    self.logger.warning(f"第 {attempt + 1} 次尝试解析商品信息失败")
+                    
+            except Exception as e:
+                self.logger.error(f"第 {attempt + 1} 次获取商品信息时出错: {str(e)}")
+                
+        self.logger.error(f"获取单个商品信息失败，已重试 {max_retries} 次: {listing_url}")
+        return None
+    
+    def _get_single_listing_html(self, listing_url: str) -> Optional[str]:
+        """获取单个商品页面的HTML内容"""
+        try:
+            # 使用curl获取页面内容
+            headers = {
+                'User-Agent': self._get_random_user_agent(),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0',
+                'Referer': 'https://www.ebay.com/'
+            }
+            
+            curl_command = [
+                'curl', '-s', '-L', '--max-time', '30',
+                '-A', headers['User-Agent'],
+                '-H', f'Accept: {headers["Accept"]}',
+                '-H', f'Accept-Language: {headers["Accept-Language"]}',
+                '-H', f'Referer: {headers["Referer"]}',
+                listing_url
+            ]
+            
+            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=40)
+            
+            if result.returncode != 0:
+                self.logger.error(f"curl命令执行失败: {result.stderr}")
+                return None
+            
+            html_content = result.stdout
+            if not html_content or len(html_content) < 1000:
+                self.logger.error("获取的HTML内容过短或为空")
+                return None
+            
+            # 检查是否被重定向到错误页面
+            if "Page not found" in html_content or "Item not found" in html_content:
+                self.logger.error("商品页面不存在或已下架")
+                return None
+                
+            return html_content
+            
+        except subprocess.TimeoutExpired:
+            self.logger.error("获取页面内容超时")
+            return None
+        except Exception as e:
+            self.logger.error(f"获取单个商品页面HTML失败: {str(e)}")
+            return None
+    
+    def _parse_single_listing(self, html_content: str, listing_url: str) -> Optional[Dict]:
+        """解析单个商品页面的信息"""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # 提取商品ID
+            item_id = self._extract_item_id_from_url(listing_url)
+            
+            # 提取商品标题
+            title = self._extract_single_listing_title(soup)
+            
+            # 提取价格信息
+            price_info = self._extract_single_listing_price(soup)
+            
+            # 提取商品状态
+            status = self._extract_single_listing_status(soup)
+            
+            # 提取图片URL
+            image_url = self._extract_single_listing_image(soup)
+            
+            # 提取卖家信息
+            seller_info = self._extract_single_listing_seller(soup)
+            
+            if not title or not price_info:
+                self.logger.error("无法提取商品的基本信息（标题或价格）")
+                return None
+            
+            item_info = {
+                'id': item_id,
+                'title': title,
+                'url': listing_url,
+                'current': price_info.get('price', 0),
+                'currency': price_info.get('currency', 'USD'),
+                'status': status,
+                'image_url': image_url,
+                'seller_info': seller_info,
+                'scraped_at': int(time.time())
+            }
+            
+            return item_info
+            
+        except Exception as e:
+            self.logger.error(f"解析单个商品页面失败: {str(e)}")
+            return None
+    
+    def _extract_item_id_from_url(self, url: str) -> Optional[str]:
+        """从URL中提取商品ID"""
+        patterns = [
+            r'/itm/(\d+)',
+            r'/p/(\d+)', 
+            r'item=(\d+)',
+            r'(\d{10,15})'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+        return None
+    
+    def _extract_single_listing_title(self, soup) -> Optional[str]:
+        """提取商品标题"""
+        selectors = [
+            'h1#it-ttl',
+            'h1.x-item-title-label',
+            'h1[data-testid="x-item-title-label"]',
+            '.x-item-title-label h1',
+            'h1.notranslate'
+        ]
+        
+        for selector in selectors:
+            title_elem = soup.select_one(selector)
+            if title_elem:
+                title = title_elem.get_text(strip=True)
+                if title:
+                    return title
+        
+        return None
+    
+    def _extract_single_listing_price(self, soup) -> Dict:
+        """提取商品价格信息"""
+        price_info = {'price': 0, 'currency': 'USD'}
+        
+        # 价格选择器
+        price_selectors = [
+            '.price .notranslate',
+            '.u-flL.condText .notranslate',
+            '#prcIsum .notranslate',
+            '[data-testid="price"] .notranslate',
+            '.mainPrice .notranslate',
+            '.price-current .notranslate'
+        ]
+        
+        for selector in price_selectors:
+            price_elem = soup.select_one(selector)
+            if price_elem:
+                price_text = price_elem.get_text(strip=True)
+                price_value = self._parse_price_text(price_text)
+                if price_value > 0:
+                    price_info['price'] = price_value
+                    # 提取货币符号
+                    if '$' in price_text:
+                        price_info['currency'] = 'USD'
+                    elif '£' in price_text:
+                        price_info['currency'] = 'GBP'
+                    elif '€' in price_text:
+                        price_info['currency'] = 'EUR'
+                    break
+        
+        return price_info
+    
+    def _parse_price_text(self, price_text: str) -> float:
+        """从价格文本中提取数值"""
+        try:
+            # 移除货币符号和其他字符，只保留数字和小数点
+            clean_price = re.sub(r'[^\d.]', '', price_text.replace(',', ''))
+            if clean_price:
+                return float(clean_price)
+        except ValueError:
+            pass
+        return 0.0
+    
+    def _extract_single_listing_status(self, soup) -> str:
+        """提取商品状态"""
+        # 检查是否已售出
+        if soup.select_one('.u-flL.vi-status .msgTextAlign'):
+            status_text = soup.select_one('.u-flL.vi-status .msgTextAlign').get_text(strip=True)
+            if 'sold' in status_text.lower():
+                return 'sold'
+        
+        # 检查是否为拍卖结束
+        if soup.select_one('.u-flL.condText'):
+            cond_text = soup.select_one('.u-flL.condText').get_text(strip=True)
+            if 'ended' in cond_text.lower():
+                return 'ended'
+        
+        return 'active'
+    
+    def _extract_single_listing_image(self, soup) -> Optional[str]:
+        """提取商品主图URL"""
+        img_selectors = [
+            '#icImg',
+            '.ux-image-magnify__container img',
+            '.vi-image-panel img'
+        ]
+        
+        for selector in img_selectors:
+            img_elem = soup.select_one(selector)
+            if img_elem:
+                img_url = img_elem.get('src') or img_elem.get('data-src')
+                if img_url and img_url.startswith('http'):
+                    return img_url
+        
+        return None
+    
+    def _extract_single_listing_seller(self, soup) -> Optional[str]:
+        """提取卖家信息"""
+        seller_selectors = [
+            '.x-sellercard-atf__info__about-seller a',
+            '.seller-persona a',
+            '.u-flL.seller-name a'
+        ]
+        
+        for selector in seller_selectors:
+            seller_elem = soup.select_one(selector)
+            if seller_elem:
+                seller_name = seller_elem.get_text(strip=True)
+                if seller_name:
+                    return seller_name
+        
+        return None

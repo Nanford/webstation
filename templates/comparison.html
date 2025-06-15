@@ -1,0 +1,595 @@
+{% extends "base.html" %}
+
+{% block title %}价格对比监控{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h2>价格对比监控</h2>
+            <p class="text-muted">监控您的商品与竞争对手的价格差异，及时获取价格变动通知</p>
+        </div>
+    </div>
+
+    <!-- 创建新对比配置 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">创建新的价格对比</h5>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-toggle="collapse" data-target="#createComparisonForm">
+                        <i class="fas fa-plus"></i> 添加对比
+                    </button>
+                </div>
+                <div class="collapse" id="createComparisonForm">
+                    <div class="card-body">
+                        <form id="comparisonForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label for="myListingUrl">我的商品URL *</label>
+                                        <input type="url" class="form-control" id="myListingUrl" required 
+                                               placeholder="https://www.ebay.com/itm/123456789">
+                                        <small class="form-text text-muted">输入您的eBay商品链接</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label for="competitorListingUrl">竞争对手商品URL *</label>
+                                        <input type="url" class="form-control" id="competitorListingUrl" required 
+                                               placeholder="https://www.ebay.com/itm/987654321">
+                                        <small class="form-text text-muted">输入竞争对手的eBay商品链接</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label for="comparisonName">对比名称</label>
+                                        <input type="text" class="form-control" id="comparisonName" 
+                                               placeholder="自定义对比名称（可选）">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label for="notifyEmail">通知邮箱 *</label>
+                                        <input type="email" class="form-control" id="notifyEmail" required 
+                                               placeholder="your-email@example.com">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label for="priceThreshold">价格差异阈值 ($)</label>
+                                        <input type="number" class="form-control" id="priceThreshold" 
+                                               value="5.0" step="0.01" min="0">
+                                        <small class="form-text text-muted">超过此差异才发送通知</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-8">
+                                    <label>通知条件</label>
+                                    <div class="form-check-container">
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="checkbox" id="notifyHigher" checked>
+                                            <label class="form-check-label" for="notifyHigher">
+                                                对手价格比我高时通知
+                                            </label>
+                                        </div>
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="checkbox" id="notifyLower" checked>
+                                            <label class="form-check-label" for="notifyLower">
+                                                对手价格比我低时通知
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-plus"></i> 创建对比配置
+                                </button>
+                                <button type="button" class="btn btn-secondary ml-2" data-toggle="collapse" data-target="#createComparisonForm">
+                                    取消
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 现有对比配置列表 -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">价格对比配置列表</h5>
+                    <div>
+                        <button class="btn btn-sm btn-success" onclick="checkAllComparisons()">
+                            <i class="fas fa-sync"></i> 批量检查
+                        </button>
+                        <button class="btn btn-sm btn-info" onclick="loadComparisons()">
+                            <i class="fas fa-refresh"></i> 刷新
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="comparisonsLoading" class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="sr-only">加载中...</span>
+                        </div>
+                        <p class="mt-2">正在加载对比配置...</p>
+                    </div>
+                    <div id="comparisonsContainer" style="display: none;">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>对比名称</th>
+                                        <th>我的商品</th>
+                                        <th>竞争对手</th>
+                                        <th>最新结果</th>
+                                        <th>状态</th>
+                                        <th>最后检查</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="comparisonsTable">
+                                    <!-- 动态内容 -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="noComparisons" class="text-center py-4" style="display: none;">
+                            <i class="fas fa-chart-line fa-3x text-muted mb-3"></i>
+                            <p class="text-muted">还没有配置任何价格对比</p>
+                            <button class="btn btn-primary" data-toggle="collapse" data-target="#createComparisonForm">
+                                创建第一个价格对比
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 对比历史模态框 -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">价格对比历史</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="historyLoading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="sr-only">加载中...</span>
+                    </div>
+                </div>
+                <div id="historyContent" style="display: none;">
+                    <!-- 动态内容 -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.comparison-card {
+    border-left: 4px solid #007bff;
+}
+.comparison-card.paused {
+    border-left-color: #ffc107;
+}
+.comparison-card.disabled {
+    border-left-color: #dc3545;
+}
+.price-diff.positive {
+    color: #28a745;
+}
+.price-diff.negative {
+    color: #dc3545;
+}
+.price-diff.equal {
+    color: #6c757d;
+}
+.form-check-container {
+    margin-top: 8px;
+}
+</style>
+
+<script>
+let comparisons = [];
+
+// 页面加载时初始化
+$(document).ready(function() {
+    loadComparisons();
+    
+    // 表单提交处理
+    $('#comparisonForm').on('submit', function(e) {
+        e.preventDefault();
+        createComparison();
+    });
+});
+
+// 创建对比配置
+function createComparison() {
+    const formData = {
+        my_listing_url: $('#myListingUrl').val(),
+        competitor_listing_url: $('#competitorListingUrl').val(),
+        notify_email: $('#notifyEmail').val(),
+        name: $('#comparisonName').val(),
+        notify_conditions: {
+            higher: $('#notifyHigher').is(':checked'),
+            lower: $('#notifyLower').is(':checked'),
+            threshold: parseFloat($('#priceThreshold').val()) || 5.0
+        }
+    };
+    
+    // 基本验证
+    if (!formData.my_listing_url || !formData.competitor_listing_url || !formData.notify_email) {
+        showAlert('请填写所有必要信息', 'warning');
+        return;
+    }
+    
+    // 显示加载状态
+    const submitBtn = $('#comparisonForm button[type="submit"]');
+    const originalText = submitBtn.html();
+    submitBtn.html('<i class="fas fa-spinner fa-spin"></i> 创建中...').prop('disabled', true);
+    
+    $.ajax({
+        url: '/api/comparison',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(formData),
+        success: function(response) {
+            if (response.success) {
+                showAlert('价格对比配置创建成功！', 'success');
+                $('#comparisonForm')[0].reset();
+                $('#createComparisonForm').collapse('hide');
+                loadComparisons(); // 重新加载列表
+            } else {
+                showAlert('创建失败: ' + response.message, 'danger');
+            }
+        },
+        error: function(xhr) {
+            const response = xhr.responseJSON || {};
+            showAlert('创建失败: ' + (response.message || '未知错误'), 'danger');
+        },
+        complete: function() {
+            submitBtn.html(originalText).prop('disabled', false);
+        }
+    });
+}
+
+// 加载对比配置列表
+function loadComparisons() {
+    $('#comparisonsLoading').show();
+    $('#comparisonsContainer').hide();
+    
+    $.ajax({
+        url: '/api/comparisons',
+        method: 'GET',
+        success: function(response) {
+            if (response.success) {
+                comparisons = response.comparisons || [];
+                renderComparisons();
+            } else {
+                showAlert('加载对比配置失败: ' + response.message, 'danger');
+            }
+        },
+        error: function(xhr) {
+            const response = xhr.responseJSON || {};
+            showAlert('加载失败: ' + (response.message || '网络错误'), 'danger');
+        },
+        complete: function() {
+            $('#comparisonsLoading').hide();
+            $('#comparisonsContainer').show();
+        }
+    });
+}
+
+// 渲染对比配置列表
+function renderComparisons() {
+    const tbody = $('#comparisonsTable');
+    tbody.empty();
+    
+    if (comparisons.length === 0) {
+        $('#noComparisons').show();
+        return;
+    }
+    
+    $('#noComparisons').hide();
+    
+    comparisons.forEach(comparison => {
+        const row = createComparisonRow(comparison);
+        tbody.append(row);
+    });
+}
+
+// 创建对比配置行
+function createComparisonRow(comparison) {
+    const latestResult = comparison.latest_result;
+    const lastCheck = comparison.last_check ? 
+        new Date(comparison.last_check * 1000).toLocaleString() : '从未检查';
+    
+    let resultHtml = '<span class="text-muted">无数据</span>';
+    if (latestResult && latestResult.comparison_result) {
+        const result = latestResult.comparison_result;
+        const diff = result.difference;
+        const diffClass = diff > 0 ? 'positive' : diff < 0 ? 'negative' : 'equal';
+        const diffIcon = diff > 0 ? '↑' : diff < 0 ? '↓' : '=';
+        
+        resultHtml = `
+            <span class="price-diff ${diffClass}">
+                ${diffIcon} $${Math.abs(diff).toFixed(2)}
+                <small class="d-block">${result.percentage.toFixed(1)}%</small>
+            </span>
+        `;
+    }
+    
+    const statusBadge = comparison.status === 'active' ? 
+        '<span class="badge badge-success">启用</span>' :
+        '<span class="badge badge-warning">暂停</span>';
+    
+    return `
+        <tr>
+            <td>
+                <strong>${comparison.name}</strong><br>
+                <small class="text-muted">${comparison.id}</small>
+            </td>
+            <td>
+                <div class="text-truncate" style="max-width: 200px;" title="${comparison.my_listing.title}">
+                    ${comparison.my_listing.title}
+                </div>
+                <small><a href="${comparison.my_listing.url}" target="_blank">查看商品</a></small>
+            </td>
+            <td>
+                <div class="text-truncate" style="max-width: 200px;" title="${comparison.competitor_listing.title}">
+                    ${comparison.competitor_listing.title}
+                </div>
+                <small><a href="${comparison.competitor_listing.url}" target="_blank">查看商品</a></small>
+            </td>
+            <td>${resultHtml}</td>
+            <td>${statusBadge}</td>
+            <td><small>${lastCheck}</small></td>
+            <td>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-primary" onclick="checkComparison('${comparison.id}')" title="立即检查">
+                        <i class="fas fa-sync"></i>
+                    </button>
+                    <button class="btn btn-outline-info" onclick="showHistory('${comparison.id}')" title="查看历史">
+                        <i class="fas fa-history"></i>
+                    </button>
+                    <button class="btn btn-outline-warning" onclick="toggleStatus('${comparison.id}')" title="启用/暂停">
+                        <i class="fas fa-power-off"></i>
+                    </button>
+                    <button class="btn btn-outline-danger" onclick="deleteComparison('${comparison.id}')" title="删除">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+// 手动检查单个对比
+function checkComparison(comparisonId) {
+    const btn = $(`button[onclick="checkComparison('${comparisonId}')"]`);
+    const originalHtml = btn.html();
+    btn.html('<i class="fas fa-spinner fa-spin"></i>').prop('disabled', true);
+    
+    $.ajax({
+        url: `/api/comparison/${comparisonId}/check`,
+        method: 'POST',
+        success: function(response) {
+            if (response.success) {
+                showAlert('价格检查完成！', 'success');
+                loadComparisons(); // 重新加载以显示最新结果
+            } else {
+                showAlert('检查失败: ' + response.message, 'danger');
+            }
+        },
+        error: function(xhr) {
+            const response = xhr.responseJSON || {};
+            showAlert('检查失败: ' + (response.message || '网络错误'), 'danger');
+        },
+        complete: function() {
+            btn.html(originalHtml).prop('disabled', false);
+        }
+    });
+}
+
+// 批量检查所有对比
+function checkAllComparisons() {
+    const btn = $('button[onclick="checkAllComparisons()"]');
+    const originalHtml = btn.html();
+    btn.html('<i class="fas fa-spinner fa-spin"></i> 检查中...').prop('disabled', true);
+    
+    $.ajax({
+        url: '/api/comparison/check_all',
+        method: 'POST',
+        success: function(response) {
+            if (response.success) {
+                showAlert(response.message, 'success');
+                loadComparisons();
+            } else {
+                showAlert('批量检查失败: ' + response.message, 'danger');
+            }
+        },
+        error: function(xhr) {
+            const response = xhr.responseJSON || {};
+            showAlert('批量检查失败: ' + (response.message || '网络错误'), 'danger');
+        },
+        complete: function() {
+            btn.html(originalHtml).prop('disabled', false);
+        }
+    });
+}
+
+// 切换状态
+function toggleStatus(comparisonId) {
+    $.ajax({
+        url: `/api/comparison/${comparisonId}/toggle`,
+        method: 'POST',
+        success: function(response) {
+            if (response.success) {
+                showAlert(response.message, 'success');
+                loadComparisons();
+            } else {
+                showAlert('操作失败: ' + response.message, 'danger');
+            }
+        },
+        error: function(xhr) {
+            const response = xhr.responseJSON || {};
+            showAlert('操作失败: ' + (response.message || '网络错误'), 'danger');
+        }
+    });
+}
+
+// 删除对比配置
+function deleteComparison(comparisonId) {
+    if (!confirm('确定要删除这个价格对比配置吗？此操作不能撤销。')) {
+        return;
+    }
+    
+    $.ajax({
+        url: `/api/comparison/${comparisonId}`,
+        method: 'DELETE',
+        success: function(response) {
+            if (response.success) {
+                showAlert(response.message, 'success');
+                loadComparisons();
+            } else {
+                showAlert('删除失败: ' + response.message, 'danger');
+            }
+        },
+        error: function(xhr) {
+            const response = xhr.responseJSON || {};
+            showAlert('删除失败: ' + (response.message || '网络错误'), 'danger');
+        }
+    });
+}
+
+// 显示历史记录
+function showHistory(comparisonId) {
+    $('#historyModal').modal('show');
+    $('#historyLoading').show();
+    $('#historyContent').hide();
+    
+    $.ajax({
+        url: `/api/comparison/${comparisonId}/history`,
+        method: 'GET',
+        success: function(response) {
+            if (response.success) {
+                renderHistory(response.config, response.history);
+            } else {
+                $('#historyContent').html('<div class="alert alert-danger">加载历史记录失败: ' + response.message + '</div>');
+            }
+        },
+        error: function(xhr) {
+            const response = xhr.responseJSON || {};
+            $('#historyContent').html('<div class="alert alert-danger">加载失败: ' + (response.message || '网络错误') + '</div>');
+        },
+        complete: function() {
+            $('#historyLoading').hide();
+            $('#historyContent').show();
+        }
+    });
+}
+
+// 渲染历史记录
+function renderHistory(config, history) {
+    let html = `
+        <div class="mb-3">
+            <h6>${config.name}</h6>
+            <small class="text-muted">
+                我的商品: ${config.my_listing.title}<br>
+                竞争对手: ${config.competitor_listing.title}
+            </small>
+        </div>
+    `;
+    
+    if (history.length === 0) {
+        html += '<div class="alert alert-info">还没有历史记录</div>';
+    } else {
+        html += '<div class="timeline">';
+        history.forEach(record => {
+            html += createHistoryItem(record);
+        });
+        html += '</div>';
+    }
+    
+    $('#historyContent').html(html);
+}
+
+// 创建历史记录项
+function createHistoryItem(record) {
+    const result = record.comparison_result;
+    const timestamp = new Date(record.timestamp * 1000).toLocaleString();
+    const myPrice = record.my_price.current;
+    const competitorPrice = record.competitor_price.current;
+    const diff = result.difference;
+    const diffClass = diff > 0 ? 'text-success' : diff < 0 ? 'text-danger' : 'text-muted';
+    const diffIcon = diff > 0 ? '↑' : diff < 0 ? '↓' : '=';
+    
+    return `
+        <div class="timeline-item border rounded p-3 mb-3">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h6>价格对比结果</h6>
+                    <div class="row">
+                        <div class="col-md-4">
+                            <small class="text-muted">我的价格</small><br>
+                            <strong>$${myPrice.toFixed(2)}</strong>
+                        </div>
+                        <div class="col-md-4">
+                            <small class="text-muted">竞争对手</small><br>
+                            <strong>$${competitorPrice.toFixed(2)}</strong>
+                        </div>
+                        <div class="col-md-4">
+                            <small class="text-muted">差异</small><br>
+                            <strong class="${diffClass}">
+                                ${diffIcon} $${Math.abs(diff).toFixed(2)}
+                                (${result.percentage.toFixed(1)}%)
+                            </strong>
+                        </div>
+                    </div>
+                    ${record.notification_sent ? '<small class="badge badge-info">已发送通知</small>' : ''}
+                </div>
+                <small class="text-muted">${timestamp}</small>
+            </div>
+        </div>
+    `;
+}
+
+// 显示提示信息
+function showAlert(message, type = 'info') {
+    const alertHtml = `
+        <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+            ${message}
+            <button type="button" class="close" data-dismiss="alert">
+                <span>&times;</span>
+            </button>
+        </div>
+    `;
+    
+    // 如果页面顶部没有alert容器，创建一个
+    if ($('#alertContainer').length === 0) {
+        $('body').prepend('<div id="alertContainer" class="container-fluid mt-3"></div>');
+    }
+    
+    $('#alertContainer').html(alertHtml);
+    
+    // 5秒后自动关闭
+    setTimeout(() => {
+        $('#alertContainer .alert').alert('close');
+    }, 5000);
+}
+</script>
+{% endblock %} 

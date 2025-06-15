@@ -76,7 +76,9 @@ def init_scheduler(app):
             'new_listings_total': 0,
             'price_changes_total': 0,
             'removed_listings_total': 0,
-            'emails_sent': 0
+            'emails_sent': 0,
+            'comparison_checks': 0,
+            'comparison_notifications': 0
         }
         
         # 遍历每个店铺并更新数据
@@ -173,6 +175,42 @@ def init_scheduler(app):
         # 如果任务失败数>0，额外记录警告信息
         if total_stats['failed_stores'] > 0:
             scheduler_logger.warning(f"警告：有 {total_stats['failed_stores']} 个店铺处理失败！")
+        
+        # 执行价格对比检查
+        scheduler_logger.info("============== 开始执行价格对比检查 ==============")
+        comparison_start_time = time.time()
+        
+        try:
+            from app.comparison import PriceComparison
+            comparison = PriceComparison(redis_client=app.redis_client)
+            
+            # 执行所有价格对比检查
+            comparison_results = comparison.perform_all_comparisons()
+            
+            comparison_end_time = time.time()
+            comparison_duration = comparison_end_time - comparison_start_time
+            
+            scheduler_logger.info("============== 价格对比检查完毕 ==============")
+            scheduler_logger.info(f"对比检查耗时: {comparison_duration:.2f}秒")
+            scheduler_logger.info(f"总对比配置: {comparison_results['total_comparisons']}")
+            scheduler_logger.info(f"成功检查: {comparison_results['successful_checks']}")
+            scheduler_logger.info(f"失败检查: {comparison_results['failed_checks']}")
+            scheduler_logger.info(f"发送通知: {len(comparison_results['notifications_needed'])}个")
+            
+            # 统计邮件发送成功率
+            email_success = sum(1 for n in comparison_results['notifications_needed'] if n.get('email_sent', False))
+            email_total = len(comparison_results['notifications_needed'])
+            if email_total > 0:
+                scheduler_logger.info(f"邮件发送成功率: {email_success}/{email_total} ({email_success/email_total*100:.1f}%)")
+            
+            scheduler_logger.info("============================================")
+            
+            # 更新总体统计
+            total_stats['comparison_checks'] = comparison_results['successful_checks']
+            total_stats['comparison_notifications'] = len(comparison_results['notifications_needed'])
+            
+        except Exception as e:
+            scheduler_logger.error(f"执行价格对比检查时出错: {str(e)}", exc_info=True)
         
         return total_stats
     

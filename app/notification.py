@@ -5,6 +5,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import logging
 from app.config import Config  # 只导入Config类
+import time
 
 # 配置日志
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -32,6 +33,7 @@ class EmailNotifier:
     
     def send_email(self, recipient, subject, body, is_html=True):
         """发送邮件"""
+        server = None  #确保server在finally块中可用
         try:
             # 创建邮件
             msg = MIMEMultipart('alternative')
@@ -47,44 +49,62 @@ class EmailNotifier:
             
             # 连接到SMTP服务器并发送邮件
             if self.use_ssl:
-                # 使用直接管理SMTP_SSL连接，而不是with语句
                 try:
-                    server = smtplib.SMTP_SSL(self.server, self.port)
+                    self.logger.info(f"正在尝试使用SSL连接到 {self.server}:{self.port} 发送邮件至 {recipient}")
+                    server = smtplib.SMTP_SSL(self.server, self.port, timeout=10) # 添加超时
                     server.login(self.username, self.password)
+                    self.logger.info(f"SSL连接成功并登录，准备发送邮件至 {recipient}")
                     result = server.sendmail(self.default_sender, recipient, msg.as_string())
-                    # 检查sendmail的返回结果，空字典表示成功
-                    send_success = (result == {})
-                    try:
-                        server.quit()
-                    except:
-                        # 忽略关闭连接时的错误
-                        pass
-                    # 如果sendmail成功，则认为邮件发送成功
-                    if send_success:
-                        self.logger.info(f"邮件已发送至 {recipient}")
+                    
+                    if not result:  # 空字典表示所有收件人都成功
+                        self.logger.info(f"邮件已成功发送至 {recipient} (SSL)")
                         return True
                     else:
-                        self.logger.error(f"发送邮件失败，返回结果: {result}")
+                        # result 是一个字典，键是发送失败的收件人，值是错误信息
+                        for failed_recipient, error_info in result.items():
+                            self.logger.error(f"通过SSL发送邮件至 {failed_recipient} 失败: {error_info}")
                         return False
+                except smtplib.SMTPException as ssl_smtp_error:
+                    self.logger.error(f"SSL邮件发送过程中发生SMTP错误 (收件人: {recipient}): {ssl_smtp_error}", exc_info=True)
+                    return False
                 except Exception as ssl_error:
-                    self.logger.error(f"SSL邮件发送失败: {ssl_error}")
-                    raise
-            else:
-                with smtplib.SMTP(self.server, self.port) as server:
+                    self.logger.error(f"SSL邮件发送失败 (收件人: {recipient}): {ssl_error}", exc_info=True)
+                    return False #确保连接错误等也返回False
+            else: # 使用TLS或无加密
+                try:
+                    self.logger.info(f"正在尝试使用TLS/无加密连接到 {self.server}:{self.port} 发送邮件至 {recipient}")
+                    server = smtplib.SMTP(self.server, self.port, timeout=10) # 添加超时
                     if self.use_tls:
                         server.starttls()
                     server.login(self.username, self.password)
-                    server.sendmail(self.default_sender, recipient, msg.as_string())
-            
-            # 非SSL模式下的成功信息已经在上面的代码中处理
-            if not self.use_ssl:
-                self.logger.info(f"邮件已发送至 {recipient}")
-                return True
-            return False  # 如果代码执行到这里，说明SSL模式下没有成功
+                    self.logger.info(f"TLS/无加密连接成功并登录，准备发送邮件至 {recipient}")
+                    result = server.sendmail(self.default_sender, recipient, msg.as_string())
+
+                    if not result: # 空字典表示所有收件人都成功
+                        self.logger.info(f"邮件已成功发送至 {recipient} (TLS/无加密)")
+                        return True
+                    else:
+                        for failed_recipient, error_info in result.items():
+                            self.logger.error(f"通过TLS/无加密发送邮件至 {failed_recipient} 失败: {error_info}")
+                        return False
+                except smtplib.SMTPException as smtp_error:
+                    self.logger.error(f"TLS/无加密邮件发送过程中发生SMTP错误 (收件人: {recipient}): {smtp_error}", exc_info=True)
+                    return False
+                except Exception as e:
+                    self.logger.error(f"TLS/无加密邮件发送失败 (收件人: {recipient}): {e}", exc_info=True)
+                    return False
         
         except Exception as e:
-            self.logger.error(f"发送邮件失败: {e}")
+            # 捕获邮件构建等早期阶段的错误
+            self.logger.error(f"构建或准备发送邮件时发生意外错误 (收件人: {recipient}): {e}", exc_info=True)
             return False
+        finally:
+            if server:
+                try:
+                    server.quit()
+                    self.logger.info(f"已关闭与邮件服务器的连接 (针对 {recipient})")
+                except Exception as e:
+                    self.logger.warning(f"关闭邮件服务器连接时发生错误 (针对 {recipient}): {e}", exc_info=True)
     
     def notify_new_listings(self, recipient, store_name, new_items):
         """通知新上架商品"""
@@ -94,15 +114,11 @@ class EmailNotifier:
         
         # 如果没有真正的新上架商品，直接返回
         if not true_new_items:
-            self.logger.info(f"没有真正标记为'New listing'的商品，不发送通知")
-            return True
+            self.logger.info(f"没有真正标记为'New listing'的商品，不为店铺 {store_name} 发送新上架通知给 {recipient}")
+            return True # 认为操作成功，因为没有需要通知的内容
         
         try:
-            # 创建邮件
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = f'【eBay店铺监控】{store_name} 有新上架商品'
-            msg['From'] = self.default_sender
-            msg['To'] = recipient
+            subject = f'【eBay店铺监控】{store_name} 有新上架商品 ({len(true_new_items)}个)' # 更新标题以包含数量
             
             # 邮件HTML内容
             html = f"""
@@ -152,35 +168,25 @@ class EmailNotifier:
             </html>
             """
             
-            # 添加邮件内容
-            msg.attach(MIMEText(html, 'html'))
-            
-            # 发送邮件
-            if self.use_ssl:
-                server = smtplib.SMTP_SSL(self.server, self.port)
+            # 使用统一的 send_email 方法
+            success = self.send_email(recipient, subject, html, is_html=True)
+            if success:
+                self.logger.info(f"成功发送新上架商品通知邮件到 {recipient} (店铺: {store_name})")
             else:
-                server = smtplib.SMTP(self.server, self.port)
-                if self.use_tls:
-                    server.starttls()
-            
-            server.login(self.username, self.password)
-            server.sendmail(self.default_sender, recipient, msg.as_string())
-            server.quit()
-            
-            self.logger.info(f"成功发送新上架商品通知邮件到 {recipient}")
-            return True
+                self.logger.error(f"发送新上架商品通知邮件失败到 {recipient} (店铺: {store_name})")
+            return success
         
         except Exception as e:
-            self.logger.error(f"发送新上架商品通知邮件失败: {str(e)}")
+            self.logger.error(f"构建新上架商品通知邮件时发生错误 (店铺: {store_name}, 收件人: {recipient}): {str(e)}", exc_info=True)
             return False
     
     def notify_price_changes(self, recipient, store_name, price_changes):
         """通知价格变动"""
         if not price_changes:
-            self.logger.info("没有价格变动，不发送通知")
+            self.logger.info(f"店铺 {store_name}: 没有价格变动，不发送通知给 {recipient}") # 增加店铺和收件人信息
             return True
         
-        subject = f"{store_name} - {len(price_changes)} 个商品价格变动"
+        subject = f"【eBay店铺监控】{store_name} - {len(price_changes)} 个商品价格变动" # 统一邮件标题格式
         
         # 构建HTML邮件内容
         html = f"""
@@ -192,14 +198,17 @@ class EmailNotifier:
                 .header {{ background-color: #3498db; color: white; padding: 10px; text-align: center; }}
                 .item-list {{ padding: 10px; }}
                 .item {{ border-bottom: 1px solid #ddd; padding: 10px; margin-bottom: 10px; }}
-                .item-header {{ display: flex; justify-content: space-between; }}
-                .item-title {{ font-weight: bold; }}
-                .price-change {{ display: flex; }}
+                .item-header {{ display: flex; justify-content: space-between; align-items: center;}}
+                .item-title {{ font-weight: bold; flex-grow: 1; margin-right: 10px;}}
+                .price-change {{ display: flex; align-items: baseline; }}
                 .old-price {{ text-decoration: line-through; color: #777; margin-right: 10px; }}
-                .new-price {{ color: #e63946; font-weight: bold; }}
+                .new-price {{ font-weight: bold; margin-right: 5px;}}
                 .price-up {{ color: #e63946; }}
                 .price-down {{ color: #2ecc71; }}
-                .item-image {{ max-width: 150px; max-height: 150px; margin-right: 10px; float: left; }}
+                .item-image-container {{ width: 100px; height: 100px; margin-right: 15px; float: left; overflow: hidden; display: flex; justify-content: center; align-items: center;}}
+                .item-image {{ max-width: 100%; max-height: 100%; object-fit: contain; }}
+                .item-details p {{ margin: 5px 0; }}
+                .clear {{ clear: both; }}
             </style>
         </head>
         <body>
@@ -212,28 +221,47 @@ class EmailNotifier:
         """
         
         for change in price_changes:
-            item = change['item']
-            old_price = change['old_price']
-            new_price = change['new_price']
-            price_diff = new_price - old_price
-            price_class = "price-up" if price_diff > 0 else "price-down"
-            price_sign = "+" if price_diff > 0 else ""
+            item = change.get('item', {}) # 确保 item 存在
+            old_price = change.get('old_price', 0)
+            new_price = change.get('new_price', 0)
             
+            # 确保价格是数值类型，以便进行比较和格式化
+            try:
+                old_price_float = float(old_price)
+                new_price_float = float(new_price)
+                price_diff = new_price_float - old_price_float
+            except (ValueError, TypeError):
+                price_diff = 0 # 如果价格无效，则差异为0
+                old_price_float = old_price # 保留原始值用于显示
+                new_price_float = new_price # 保留原始值用于显示
+
+
+            price_class = "price-up" if price_diff > 0 else ("price-down" if price_diff < 0 else "price-same")
+            price_sign = "+" if price_diff > 0 else ""
+            currency = item.get('currency', '$') # 从item获取货币符号
+
+            # 构建价格显示字符串，处理可能的非数值情况
+            old_price_display = f"{currency}{old_price_float:.2f}" if isinstance(old_price_float, (int, float)) else str(old_price)
+            new_price_display = f"{currency}{new_price_float:.2f}" if isinstance(new_price_float, (int, float)) else str(new_price)
+            price_diff_display = f"({price_sign}{currency}{price_diff:.2f})" if isinstance(price_diff, (int, float)) and price_diff != 0 else ""
+
+
             html += f"""
                     <div class="item">
-                        <div class="item-header">
-                            <div class="item-title">{item.get('title', 'N/A')}</div>
-                            <div class="price-change">
-                                <div class="old-price">${old_price:.2f}</div>
-                                <div class="new-price">${new_price:.2f}</div>
-                                <div class="{price_class}">({price_sign}{price_diff:.2f})</div>
+                        <div class="item-image-container">
+                            <img class="item-image" src="{item.get('image_url', '')}" alt="商品图片">
+                        </div>
+                        <div class="item-details">
+                            <div class="item-header">
+                                <div class="item-title"><a href="{item.get('url', '#')}" target="_blank">{item.get('title', 'N/A')}</a></div>
+                                <div class="price-change">
+                                    <div class="old-price">{old_price_display}</div>
+                                    <div class="new-price {price_class}">{new_price_display}</div>
+                                    <div class="{price_class}">{price_diff_display}</div>
+                                </div>
                             </div>
                         </div>
-                        <p>
-                            <img class="item-image" src="{item.get('image_url', '')}" alt="商品图片">
-                            <a href="{item.get('url', '#')}" target="_blank">查看商品</a>
-                        </p>
-                        <div style="clear: both;"></div>
+                        <div class="clear"></div>
                     </div>
             """
         
@@ -244,7 +272,190 @@ class EmailNotifier:
         </html>
         """
         
-        return self.send_email(recipient, subject, html)
+        # 使用统一的 send_email 方法
+        success = self.send_email(recipient, subject, html, is_html=True)
+        if success:
+            self.logger.info(f"成功发送价格变动通知邮件到 {recipient} (店铺: {store_name})")
+        else:
+            self.logger.error(f"发送价格变动通知邮件失败到 {recipient} (店铺: {store_name})")
+        return success
+
+    def notify_price_comparison(self, recipient: str, comparison_config: dict, comparison_result: dict) -> bool:
+        """发送价格对比通知邮件"""
+        try:
+            comparison_name = comparison_config.get('name', '价格对比')
+            my_listing = comparison_config.get('my_listing', {})
+            competitor_listing = comparison_config.get('competitor_listing', {})
+            
+            # 获取对比结果
+            my_price_data = comparison_result.get('my_price', {})
+            competitor_price_data = comparison_result.get('competitor_price', {})
+            result = comparison_result.get('comparison_result', {})
+            
+            my_price = my_price_data.get('current', 0)
+            competitor_price = competitor_price_data.get('current', 0)
+            difference = result.get('difference', 0)
+            percentage = result.get('percentage', 0)
+            status = result.get('status', 'unknown')
+            
+            # 确定邮件主题和状态文本
+            if status == 'competitor_higher':
+                status_text = '竞争对手价格更高'
+                status_color = '#28a745'  # 绿色，对我们有利
+                advantage_text = '您的价格更有竞争力！'
+            elif status == 'competitor_lower':
+                status_text = '竞争对手价格更低'
+                status_color = '#dc3545'  # 红色，对我们不利
+                advantage_text = '竞争对手价格更低，考虑调整定价策略'
+            else:
+                status_text = '价格相近'
+                status_color = '#6c757d'  # 灰色
+                advantage_text = '价格相近，保持关注'
+            
+            subject = f"【价格对比提醒】{comparison_name} - {status_text}"
+            
+            # 构建HTML邮件内容
+            html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f8f9fa; }}
+                    .container {{ max-width: 800px; margin: 0 auto; background-color: white; }}
+                    .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center; }}
+                    .header h1 {{ margin: 0; font-size: 24px; }}
+                    .content {{ padding: 30px 20px; }}
+                    .comparison-card {{ border: 1px solid #e0e0e0; border-radius: 8px; margin: 20px 0; overflow: hidden; }}
+                    .card-header {{ background-color: #f8f9fa; padding: 15px 20px; border-bottom: 1px solid #e0e0e0; }}
+                    .card-body {{ padding: 20px; }}
+                    .price-section {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }}
+                    .price-item {{ text-align: center; flex: 1; }}
+                    .price-label {{ font-size: 14px; color: #6c757d; margin-bottom: 5px; }}
+                    .price-value {{ font-size: 24px; font-weight: bold; color: #2c3e50; }}
+                    .vs-divider {{ font-size: 18px; color: #adb5bd; margin: 0 20px; }}
+                    .result-section {{ background-color: {status_color}; color: white; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0; }}
+                    .result-title {{ font-size: 18px; font-weight: bold; margin-bottom: 10px; }}
+                    .result-details {{ font-size: 16px; }}
+                    .product-info {{ background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; }}
+                    .product-title {{ font-weight: bold; color: #2c3e50; margin-bottom: 8px; }}
+                    .product-link {{ color: #007bff; text-decoration: none; }}
+                    .footer {{ background-color: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 12px; }}
+                    .badge {{ display: inline-block; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }}
+                    .badge-success {{ background-color: #28a745; color: white; }}
+                    .badge-danger {{ background-color: #dc3545; color: white; }}
+                    .badge-secondary {{ background-color: #6c757d; color: white; }}
+                    @media (max-width: 600px) {{
+                        .price-section {{ flex-direction: column; }}
+                        .vs-divider {{ margin: 10px 0; }}
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>🔔 价格对比提醒</h1>
+                        <p>{comparison_name}</p>
+                    </div>
+                    
+                    <div class="content">
+                        <div class="result-section">
+                            <div class="result-title">{advantage_text}</div>
+                            <div class="result-details">
+                                价格差异: <strong>${abs(difference):.2f}</strong> ({abs(percentage):.1f}%)
+                            </div>
+                        </div>
+                        
+                        <div class="comparison-card">
+                            <div class="card-header">
+                                <h3 style="margin: 0;">💰 价格对比详情</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="price-section">
+                                    <div class="price-item">
+                                        <div class="price-label">我的商品价格</div>
+                                        <div class="price-value">${my_price:.2f}</div>
+                                        <div class="badge badge-success">我的价格</div>
+                                    </div>
+                                    <div class="vs-divider">VS</div>
+                                    <div class="price-item">
+                                        <div class="price-label">竞争对手价格</div>
+                                        <div class="price-value">${competitor_price:.2f}</div>
+                                        <div class="badge badge-danger">竞争对手</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="comparison-card">
+                            <div class="card-header">
+                                <h3 style="margin: 0;">📋 商品信息</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="product-info">
+                                    <div class="product-title">我的商品</div>
+                                    <div>{my_listing.get('title', '商品标题')}</div>
+                                    <div><a href="{my_listing.get('url', '#')}" class="product-link" target="_blank">查看商品详情 →</a></div>
+                                </div>
+                                
+                                <div class="product-info">
+                                    <div class="product-title">竞争对手商品</div>
+                                    <div>{competitor_listing.get('title', '商品标题')}</div>
+                                    <div><a href="{competitor_listing.get('url', '#')}" class="product-link" target="_blank">查看商品详情 →</a></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 30px; padding: 20px; background-color: #e3f2fd; border-radius: 8px;">
+                            <h4 style="margin-top: 0; color: #1976d2;">💡 建议操作</h4>
+                            <ul style="margin-bottom: 0;">
+            """
+            
+            # 根据对比结果添加建议
+            if status == 'competitor_higher':
+                html += """
+                                <li>您的价格更有优势，可以考虑保持当前定价</li>
+                                <li>如果销量不错，可以考虑适当提价</li>
+                                <li>继续监控竞争对手是否调价</li>
+                """
+            elif status == 'competitor_lower':
+                html += """
+                                <li>竞争对手价格更低，建议评估是否需要调价</li>
+                                <li>分析竞争对手商品的质量和服务差异</li>
+                                <li>考虑通过其他方式提升竞争力（如免邮、快速发货等）</li>
+                """
+            else:
+                html += """
+                                <li>价格相近，关注其他竞争因素</li>
+                                <li>继续监控价格变化趋势</li>
+                                <li>考虑通过服务差异化获得竞争优势</li>
+                """
+            
+            html += f"""
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="footer">
+                        <p>此邮件由eBay价格监控系统自动发送</p>
+                        <p>检查时间: {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                        <p>配置ID: {comparison_config.get('id', 'N/A')}</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # 发送邮件
+            success = self.send_email(recipient, subject, html, is_html=True)
+            if success:
+                self.logger.info(f"成功发送价格对比通知邮件到 {recipient} (对比: {comparison_name})")
+            else:
+                self.logger.error(f"发送价格对比通知邮件失败到 {recipient} (对比: {comparison_name})")
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"构建价格对比通知邮件时发生错误 (收件人: {recipient}): {str(e)}", exc_info=True)
+            return False
 
 def send_notification_email(recipient_email, changes, store_id):
     """发送商品变动通知邮件"""
